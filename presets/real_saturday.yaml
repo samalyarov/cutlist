@@ -1,0 +1,20 @@
+name: real_saturday
+
+caption:
+  text: "ЗАВТРА РИЛ СУББОТА"
+  position: top_center
+  size_frac: 0.065
+  fill: "#FFFFFF"
+  outline: "#000000"
+  outline_frac: 0.006
+
+rhythm:
+  segments: {min: 4, max: 10}
+  seg_duration: {min: 1.2, target: 2.0, max: 2.8}
+  total: {min: 9, max: 15}
+
+output:
+  width: 854
+  height: 480
+  fps: 25
+  crf: 20
