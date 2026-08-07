@@ -1,0 +1,28 @@
+[project]
+name = "cutlist"
+version = "0.1.0"
+description = "Assemble short captioned clips from a feature film"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "typer>=0.12",
+    "pyyaml>=6.0",
+    "pillow>=10.3",
+    "scenedetect>=0.6.4",
+    "opencv-python-headless>=4.9",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+cutlist = "cutlist.cli:app"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["cutlist*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

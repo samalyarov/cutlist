@@ -1,0 +1,68 @@
+# Python environment
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+build/
+dist/
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.ipynb_checkpoints/
+
+# Secrets and local overrides
+.env
+.env.*
+!.env.example
+*.local.yaml
+
+# Source films, per-movie indexes, run workdirs, rendered clips.
+# Large, regenerable, or not ours to redistribute.
+input/
+cache/
+work/
+output/
+references/
+
+# Internal working documents
+docs/
+
+# Media, anywhere in the tree. Drop a `!path/to/clip.mp4` line below if a
+# specific clip ever needs to be tracked as a test fixture.
+*.mp4
+*.mkv
+*.avi
+*.mov
+*.webm
+*.m4v
+*.gif
+*.srt
+*.ass
+*.vtt
+
+# Generated analysis artifacts
+*.sqlite
+*.sqlite3
+*.db
+*.npy
+*.npz
+thumbs/
+sheets/
+
+# OS cruft
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# LLM
+.claude/
+.superpowers/
