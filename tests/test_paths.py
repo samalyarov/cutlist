@@ -1,6 +1,7 @@
+import os
 import shutil
 
-from cutlist.paths import Workspace, film_id
+from cutlist.paths import CHUNK, Workspace, film_id
 
 
 def test_film_id_is_stable_across_rename(fixture_film, tmp_path):
@@ -19,6 +20,30 @@ def test_film_id_handles_tiny_files(tmp_path):
     tiny = tmp_path / "tiny.mp4"
     tiny.write_bytes(b"abc")
     assert len(film_id(tiny)) == 32
+
+
+def test_film_id_distinguishes_content_past_first_megabyte(tmp_path):
+    # same length, identical first megabyte, differing only in the tail --
+    # a size-only or head-only implementation would see these as the same film.
+    # Both files land in the 1MB-2MB band, which also pins the gap between the
+    # "just read the rest" and "seek to the tail" branches in film_id.
+    head = os.urandom(CHUNK)
+    a = tmp_path / "a.mp4"
+    b = tmp_path / "b.mp4"
+    a.write_bytes(head + b"a" * (CHUNK // 2))
+    b.write_bytes(head + b"b" * (CHUNK // 2))
+    assert film_id(a) != film_id(b)
+
+
+def test_film_id_hashes_tail_of_large_file(tmp_path):
+    # over 2x CHUNK, so film_id takes the seek(-CHUNK, SEEK_END) branch
+    head = os.urandom(CHUNK)
+    middle = os.urandom(CHUNK)
+    a = tmp_path / "a.mp4"
+    b = tmp_path / "b.mp4"
+    a.write_bytes(head + middle + b"a" * CHUNK)
+    b.write_bytes(head + middle + b"b" * CHUNK)
+    assert film_id(a) != film_id(b)
 
 
 def test_workspace_paths_are_created_on_demand(tmp_path, fixture_film):

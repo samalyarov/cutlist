@@ -20,8 +20,12 @@ def film_id(path: Path) -> str:
     with path.open("rb") as handle:
         digest.update(handle.read(CHUNK))
         if size > 2 * CHUNK:
+            # large file: middle is untouched, skip straight to the tail
             handle.seek(-CHUNK, os.SEEK_END)
             digest.update(handle.read(CHUNK))
+        elif size > CHUNK:
+            # first chunk overlaps the tail here, so just take what's left
+            digest.update(handle.read())
 
     return digest.hexdigest()
 
