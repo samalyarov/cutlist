@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
 
-from cutlist.shell import run
+from cutlist.shell import ToolError, run
 
 
 @dataclass(frozen=True)
@@ -16,6 +16,20 @@ class VideoInfo:
     has_audio: bool
 
 
+def _pick_video_stream(streams: list[dict], path: Path) -> dict:
+    # Embedded cover art (e.g. an mjpeg thumbnail) shows up as its own
+    # video stream, so picking "the" video stream by position or an
+    # unfiltered first-match would silently return the thumbnail instead
+    # of the film on files that carry one.
+    candidates = [
+        s for s in streams
+        if s["codec_type"] == "video" and not s.get("disposition", {}).get("attached_pic")
+    ]
+    if not candidates:
+        raise ToolError(f"no video stream found in {path}")
+    return max(candidates, key=lambda s: int(s["width"]) * int(s["height"]))
+
+
 def probe(path: Path) -> VideoInfo:
     payload = json.loads(run([
         "ffprobe", "-v", "error",
@@ -25,7 +39,7 @@ def probe(path: Path) -> VideoInfo:
     ]))
 
     streams = payload["streams"]
-    video = next(s for s in streams if s["codec_type"] == "video")
+    video = _pick_video_stream(streams, path)
 
     return VideoInfo(
         path=path,
