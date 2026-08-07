@@ -1,10 +1,17 @@
-import pytest
-from PIL import Image
+from pathlib import Path
 
-from cutlist.media.caption import render_caption, resolve_font
+import pytest
+from PIL import Image, ImageDraw, ImageFont
+
+from cutlist.media import caption as caption_module
+from cutlist.media.caption import MAX_WIDTH_FRAC, FontError, render_caption, resolve_font
 from cutlist.presets import CaptionSpec, OutputSpec
 
 OUTPUT = OutputSpec(width=854, height=480, fps=25, crf=20)
+
+# Ships with Windows and has no Cyrillic coverage -- exactly the "font draws
+# tofu" scenario the glyph-coverage check exists to catch.
+FONT_WITHOUT_CYRILLIC = Path(r"C:\Windows\Fonts\OCRAEXT.TTF")
 
 
 def render(tmp_path, text="ЗАВТРА РИЛ СУББОТА"):
@@ -35,14 +42,6 @@ def test_leaves_the_bottom_untouched(tmp_path):
     assert bottom.getbbox() is None
 
 
-def test_cyrillic_renders_as_much_ink_as_latin(tmp_path):
-    cyrillic = render(tmp_path / "a", "ЗАВТРА РИЛ СУББОТА")
-    latin = render(tmp_path / "b", "ZAVTRA RIL SUBBOTA")
-    cyrillic_ink = sum(cyrillic.getchannel("A").point(lambda v: v > 0 and 255).getdata())
-    latin_ink = sum(latin.getchannel("A").point(lambda v: v > 0 and 255).getdata())
-    assert cyrillic_ink > latin_ink * 0.5
-
-
 def test_is_horizontally_centred(tmp_path):
     image = render(tmp_path)
     box = image.getchannel("A").getbbox()
@@ -53,3 +52,61 @@ def test_is_horizontally_centred(tmp_path):
 
 def test_resolve_font_finds_something():
     assert resolve_font(None).exists()
+
+
+def test_resolve_font_raises_for_a_named_font_that_does_not_exist():
+    with pytest.raises(FontError):
+        resolve_font("no-such-font-anywhere.ttf")
+
+
+def test_resolve_font_raises_when_no_candidate_exists(monkeypatch):
+    monkeypatch.setattr(caption_module, "FONT_CANDIDATES", [])
+    with pytest.raises(FontError):
+        resolve_font(None)
+
+
+@pytest.mark.skipif(
+    not FONT_WITHOUT_CYRILLIC.exists(), reason="OCRAEXT.TTF not present on this machine"
+)
+def test_font_missing_cyrillic_glyphs_is_rejected(tmp_path):
+    # An ink-count comparison can't catch this: OCRAEXT.TTF's tofu boxes for
+    # Cyrillic are *denser* than real letterforms, not sparser, so a
+    # threshold on ink alone would pass this font. Glyph-bitmap comparison
+    # against .notdef is what actually detects the missing coverage.
+    spec = CaptionSpec(text="ЗАВТРА РИЛ СУББОТА", font=str(FONT_WITHOUT_CYRILLIC))
+    with pytest.raises(FontError):
+        render_caption(spec, OUTPUT, tmp_path / "caption.png")
+
+
+def test_long_caption_shrinks_to_fit_instead_of_clipping(tmp_path):
+    text = "ЗАВТРА РИЛ СУББОТА " * 3
+    image = render(tmp_path, text)
+    box = image.getchannel("A").getbbox()
+    assert box[2] - box[0] <= OUTPUT.width * MAX_WIDTH_FRAC + 1
+
+
+def test_unrenderably_long_caption_raises_font_error(tmp_path):
+    text = "ЗАВТРА РИЛ СУББОТА " * 20
+    with pytest.raises(FontError):
+        render_caption(CaptionSpec(text=text), OUTPUT, tmp_path / "caption.png")
+
+
+def test_large_outline_does_not_clip_at_the_top(tmp_path):
+    text = "ЗАВТРА РИЛ СУББОТА"
+    spec = CaptionSpec(text=text, outline_frac=0.05)
+    dest = render_caption(spec, OUTPUT, tmp_path / "caption.png")
+    image = Image.open(dest)
+    box = image.getchannel("A").getbbox()
+
+    # Independently measure the glyphs' natural (un-clamped) height. If the
+    # top got clipped against the canvas edge, the rendered bbox will be
+    # shorter than this, regardless of where the text was positioned.
+    font_path = resolve_font(spec.font)
+    size = round(OUTPUT.height * spec.size_frac)
+    stroke = round(size * (spec.outline_frac / spec.size_frac))
+    font = ImageFont.truetype(str(font_path), size=size)
+    probe = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+    top, bottom = probe.textbbox((0, 0), text, font=font, stroke_width=stroke, anchor="ma")[1::2]
+    natural_height = bottom - top
+
+    assert (box[3] - box[1]) >= natural_height - 1

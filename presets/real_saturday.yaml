@@ -3,10 +3,10 @@ name: real_saturday
 caption:
   text: "ЗАВТРА РИЛ СУББОТА"
   position: top_center
-  size_frac: 0.065
+  size_frac: 0.125
   fill: "#FFFFFF"
   outline: "#000000"
-  outline_frac: 0.006
+  outline_frac: 0.009
 
 rhythm:
   segments: {min: 4, max: 10}
