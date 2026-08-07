@@ -34,7 +34,7 @@ def detect_shots(
     )
 
     shots = [
-        Shot(index=0, start=start.get_seconds(), end=end.get_seconds())
+        Shot(index=0, start=start.seconds, end=end.seconds)
         for start, end in scenes
     ]
     return _renumber(_merge_short(shots, min_shot_seconds))
@@ -48,6 +48,17 @@ def _merge_short(shots: list[Shot], minimum: float) -> list[Shot]:
             merged[-1] = Shot(previous.index, previous.start, shot.end)
         else:
             merged.append(shot)
+
+    # A short shot at the very start has no predecessor to absorb into, so
+    # it has to fold forward into whatever comes after it instead. Loop
+    # rather than a single check because a flash frame or logo sting can
+    # leave several short shots stacked at the head. If the whole film is
+    # one shot under the minimum, len(merged) > 1 is false and it survives
+    # unmerged — there's nothing to fold it into.
+    while len(merged) > 1 and merged[0].duration < minimum:
+        head, following = merged[0], merged[1]
+        merged[0:2] = [Shot(head.index, head.start, following.end)]
+
     return merged
 
 

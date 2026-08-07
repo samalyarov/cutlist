@@ -1,4 +1,4 @@
-from cutlist.media.shots import detect_shots
+from cutlist.media.shots import Shot, _merge_short, _renumber, detect_shots
 from tests.conftest import FIXTURE_CUTS, FIXTURE_DURATION
 
 
@@ -31,3 +31,46 @@ def test_duration_property(fixture_film):
     for shot in detect_shots(fixture_film):
         assert shot.duration == shot.end - shot.start
         assert shot.duration > 0
+
+
+def test_leading_short_shot_merges_into_the_next_one():
+    # A 0.1s flash frame at the start has no predecessor to absorb into.
+    shots = [
+        Shot(0, 0.0, 0.1),
+        Shot(1, 0.1, 5.0),
+        Shot(2, 5.0, 10.0),
+    ]
+    merged = _merge_short(shots, minimum=0.4)
+    assert [(s.start, s.end) for s in merged] == [(0.0, 5.0), (5.0, 10.0)]
+    for earlier, later in zip(merged, merged[1:]):
+        assert earlier.end == later.start
+
+
+def test_several_leading_short_shots_collapse_into_one():
+    shots = [
+        Shot(0, 0.0, 0.1),
+        Shot(1, 0.1, 0.2),
+        Shot(2, 0.2, 0.3),
+        Shot(3, 0.3, 5.0),
+    ]
+    merged = _merge_short(shots, minimum=0.4)
+    assert [(s.start, s.end) for s in merged] == [(0.0, 5.0)]
+
+
+def test_single_short_shot_is_preserved_not_dropped():
+    # Nothing to fold it into, and dropping the only shot would be worse
+    # than keeping one that's under the minimum.
+    shots = [Shot(0, 0.0, 0.1)]
+    merged = _merge_short(shots, minimum=0.4)
+    assert [(s.start, s.end) for s in merged] == [(0.0, 0.1)]
+
+
+def test_indices_are_sequential_after_merging_leading_short_shots():
+    shots = [
+        Shot(0, 0.0, 0.1),
+        Shot(1, 0.1, 0.2),
+        Shot(2, 0.2, 5.0),
+        Shot(3, 5.0, 10.0),
+    ]
+    merged = _renumber(_merge_short(shots, minimum=0.4))
+    assert [s.index for s in merged] == list(range(len(merged)))
