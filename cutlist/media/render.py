@@ -112,14 +112,17 @@ def render_clip(
             )
             for i, segment in enumerate(segments)
         ]
-        concat(parts, dest)
-    except Exception:
-        # ffmpeg's -y truncates dest before it can fail mid-write, and a
-        # stale copy from an earlier crash could already be sitting there.
-        # Either way, a missing file is a better failure signal than one
-        # that looks like a valid clip but isn't.
-        dest.unlink(missing_ok=True)
-        raise
+        try:
+            concat(parts, dest)
+        except Exception:
+            # dest is only ever written by concat (via ffmpeg's -y, which
+            # truncates it before ffmpeg can fail mid-write), so this is the
+            # only point where dest could be corrupt. encode_segment writes
+            # solely into scratch, so a failure there must leave a
+            # pre-existing dest -- e.g. a valid clip from an earlier render
+            # -- untouched.
+            dest.unlink(missing_ok=True)
+            raise
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
     return dest

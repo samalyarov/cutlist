@@ -69,12 +69,13 @@ def test_render_clip_cleans_up_scratch(fixture_film, caption, tmp_path):
     assert not scratch.exists()
 
 
-def test_render_clip_removes_partial_dest_on_failure(fixture_film, caption, tmp_path, monkeypatch):
-    # Seed dest with a stale file, standing in for a truncated leftover from
-    # an earlier crash. A failure partway through rendering should remove
-    # it rather than leave something that looks like a finished clip.
-    dest = tmp_path / "clip.mp4"
-    dest.write_bytes(b"stale leftover from a previous crash")
+def test_render_clip_cleans_up_scratch_on_mid_list_encode_failure(
+    fixture_film, caption, tmp_path, monkeypatch
+):
+    # A failure partway through the segment loop -- not just on the first
+    # or last one -- should still clear scratch. (dest is untouched here:
+    # encode_segment never writes to it, only to scratch; see
+    # test_render_clip_preserves_dest_when_encode_fails for that guarantee.)
     scratch = tmp_path / "scratch"
 
     real_encode_segment = encode_segment
@@ -90,9 +91,47 @@ def test_render_clip_removes_partial_dest_on_failure(fixture_film, caption, tmp_
 
     segments = [Segment(2.0, 2.0), Segment(7.0, 2.0), Segment(12.0, 2.0)]
     with pytest.raises(RuntimeError):
-        render_clip(fixture_film, segments, caption, OUTPUT, dest, scratch)
+        render_clip(fixture_film, segments, caption, OUTPUT, tmp_path / "clip.mp4", scratch)
 
     assert not scratch.exists()
+
+
+def test_render_clip_preserves_dest_when_encode_fails(fixture_film, caption, tmp_path, monkeypatch):
+    # dest is only ever created/truncated by concat(); encode_segment writes
+    # solely into scratch. A failure before concat runs must leave a
+    # pre-existing dest (e.g. a valid clip from a previous render) alone.
+    dest = tmp_path / "clip.mp4"
+    dest.write_bytes(b"a perfectly good previous clip")
+    scratch = tmp_path / "scratch"
+
+    def failing_encode_segment(film, segment, caption_png, output, seg_dest):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("cutlist.media.render.encode_segment", failing_encode_segment)
+
+    with pytest.raises(RuntimeError):
+        render_clip(
+            fixture_film, [Segment(2.0, 2.0)], caption, OUTPUT, dest, scratch
+        )
+
+    assert dest.read_bytes() == b"a perfectly good previous clip"
+
+
+def test_render_clip_removes_dest_when_concat_fails(fixture_film, caption, tmp_path, monkeypatch):
+    dest = tmp_path / "clip.mp4"
+    dest.write_bytes(b"a perfectly good previous clip")
+    scratch = tmp_path / "scratch"
+
+    def failing_concat(parts, dest):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("cutlist.media.render.concat", failing_concat)
+
+    with pytest.raises(RuntimeError):
+        render_clip(
+            fixture_film, [Segment(2.0, 2.0)], caption, OUTPUT, dest, scratch
+        )
+
     assert not dest.exists()
 
 
