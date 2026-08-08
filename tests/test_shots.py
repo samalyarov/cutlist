@@ -1,5 +1,16 @@
 from cutlist.media.shots import Shot, _merge_short, _renumber, detect_shots
-from tests.conftest import FIXTURE_CUTS, FIXTURE_DURATION
+from tests.conftest import CUTFREE_DURATION, FIXTURE_CUTS, FIXTURE_DURATION
+
+
+def test_cutfree_video_yields_one_shot_spanning_the_whole_film(cutfree_film):
+    # detect() defaults to assuming the video opens mid-scene, which for a
+    # video with zero cuts means zero scenes rather than one covering
+    # everything. Without start_in_scene=True this comes back [], and the
+    # `cutlist shots` command then crashes computing a median of nothing.
+    shots = detect_shots(cutfree_film)
+    assert len(shots) == 1
+    assert shots[0].start == 0.0
+    assert abs(shots[0].end - CUTFREE_DURATION) < 0.5
 
 
 def test_detects_every_cut_in_the_fixture(fixture_film):

@@ -39,3 +39,24 @@ def fixture_film(tmp_path_factory):
         str(out),
     ])
     return out
+
+
+CUTFREE_DURATION = 3.0
+
+
+@pytest.fixture(scope="session")
+def cutfree_film(tmp_path_factory):
+    """A 3s single flat colour, deliberately with no cuts at all.
+
+    Session-scoped for the same reason as fixture_film -- nothing mutates it.
+    """
+    out = tmp_path_factory.mktemp("media") / "cutfree.mp4"
+
+    run([
+        "ffmpeg", "-y", "-v", "error",
+        "-f", "lavfi",
+        "-i", f"color=c=0x336699:s=320x240:d={CUTFREE_DURATION}:r=25",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p",
+        str(out),
+    ])
+    return out

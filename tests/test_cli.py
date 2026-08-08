@@ -31,6 +31,16 @@ def test_shots_command_can_emit_json(fixture_film):
     assert {"index", "start", "end"} <= shots[0].keys()
 
 
+def test_shots_command_succeeds_on_a_cut_free_film(cutfree_film):
+    # Used to IndexError on lengths[len(lengths) // 2] because detect_shots
+    # returned [] for a video with no cuts -- an unhandled crash rather than
+    # the clean `error:` line this command boundary exists to guarantee.
+    result = runner.invoke(app, ["shots", str(cutfree_film)])
+    assert result.exit_code == 0, result.output
+    assert "1 shots" in result.stdout
+    assert "Traceback" not in result.output
+
+
 def test_draft_writes_playable_clips(fixture_film, tmp_path):
     result = runner.invoke(app, [
         "draft", str(fixture_film),
@@ -61,6 +71,39 @@ def test_draft_caption_override_is_accepted(fixture_film, tmp_path):
     ])
     assert result.exit_code == 0, result.stdout
     assert "ДРУГОЙ ТЕКСТ" in result.stdout
+
+
+def test_draft_caption_pngs_do_not_collide_across_runs(fixture_film, tmp_path, monkeypatch):
+    # caption.png used to live at cache_for(film) / "caption.png", keyed on
+    # the film alone. Two runs of the same film with different captions
+    # would both reach for that one path, and the later render_caption call
+    # would overwrite the PNG the earlier run's still-encoding segments were
+    # reading from. Scoping it under each run's own (uuid-tagged) scratch
+    # root means the two runs never touch the same file.
+    seen_paths = []
+    original = cli.render_caption
+
+    def spying(spec, output, dest):
+        seen_paths.append(dest)
+        return original(spec, output, dest)
+
+    monkeypatch.setattr(cli, "render_caption", spying)
+
+    for text in ("FIRST CAPTION", "SECOND CAPTION"):
+        result = runner.invoke(app, [
+            "draft", str(fixture_film),
+            "--preset", "presets/real_saturday.yaml",
+            "--caption", text,
+            "--count", "1",
+            "--root", str(tmp_path),
+            "--seed", "0",
+        ])
+        assert result.exit_code == 0, result.stdout
+
+    assert len(seen_paths) == 2
+    assert seen_paths[0] != seen_paths[1]
+    shared_path = cli.Workspace(root=tmp_path).cache_for(fixture_film) / "caption.png"
+    assert shared_path not in seen_paths
 
 
 def test_missing_film_exits_nonzero(tmp_path):
