@@ -111,9 +111,6 @@ def draft(
     found = detect_shots(film)
     typer.echo(f"{len(found)} shots")
 
-    caption_png = render_caption(
-        spec.caption, spec.output, workspace.cache_for(film) / "caption.png"
-    )
     rng = random.Random(seed)
 
     # Scoped by a random token rather than just the clip index, and rooted
@@ -121,6 +118,13 @@ def draft(
     # two concurrent drafts of the same film+preset used to both reach for
     # `.scratch_01` and race on each other's segment writes and rmtree.
     scratch_root = workspace.cache_for(film) / f"scratch_{uuid.uuid4().hex[:8]}"
+
+    # Same collision the scratch dir above was fixed for: caption.png used to
+    # be keyed on the film alone, so two concurrent drafts of the same film
+    # with different captions or presets would overwrite each other's PNG
+    # mid-run and burn the wrong text into the other run's clips. Scoping it
+    # under this run's own scratch_root removes the shared path entirely.
+    caption_png = render_caption(spec.caption, spec.output, scratch_root / "caption.png")
 
     written = 0
     for n in range(1, count + 1):
