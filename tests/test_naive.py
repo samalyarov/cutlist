@@ -139,12 +139,18 @@ def test_raises_when_no_draw_can_reach_the_total():
     # Only 4 shots clear the floor, so count is forced to exactly 4 every
     # attempt -- there is no different draw the retry loop could find. With
     # min_seconds == target_seconds == max_seconds, those 4 shots have no
-    # slack to grow into, and 4 * 1.2s can never reach a 9.0s floor. This
+    # slack to grow into, and 4 * 2.0s can never reach a 9.0s floor. This
     # must stay a real, un-retryable failure, not something the retry masks.
-    shots = [Shot(i, i * 1.2, (i + 1) * 1.2) for i in range(4)]
+    #
+    # Durations here are whole seconds rather than i * 1.2: that drifts to
+    # 1.1999999999999997 for one shot, which lands under the 1.2s floor and
+    # trips the len(usable) < min_segments guard before the retry loop is
+    # even reached -- so the old version of this test never touched the
+    # raise it was meant to exercise.
+    shots = [Shot(i, i * 2.0, (i + 1) * 2.0) for i in range(4)]
     tight_rhythm = RhythmSpec(
         min_segments=4, max_segments=10,
-        min_seconds=1.2, target_seconds=1.2, max_seconds=1.2,
+        min_seconds=2.0, target_seconds=2.0, max_seconds=2.0,
         min_total=9.0, max_total=15.0,
     )
     with pytest.raises(NotEnoughFootage):
