@@ -9,6 +9,13 @@ class NotEnoughFootage(RuntimeError):
     """The film has too few usable shots to fill an assembly."""
 
 
+# A single random count-and-sample can land on a pool that happens to have no
+# slack in the direction it needs (e.g. every drawn shot already pinned at its
+# own short duration). That's bad luck, not a real shortage of footage, so a
+# handful of retries with fresh draws is tried before giving up.
+_MAX_ATTEMPTS = 20
+
+
 def draft_segments(
     shots: list[Shot],
     rhythm: RhythmSpec,
@@ -26,15 +33,22 @@ def draft_segments(
             f"{rhythm.min_seconds}s or more, found {len(usable)}"
         )
 
-    count = rng.randint(rhythm.min_segments, min(rhythm.max_segments, len(usable)))
-    chosen = sorted(rng.sample(usable, count), key=lambda shot: shot.start)
+    for _ in range(_MAX_ATTEMPTS):
+        count = rng.randint(rhythm.min_segments, min(rhythm.max_segments, len(usable)))
+        chosen = sorted(rng.sample(usable, count), key=lambda shot: shot.start)
 
-    durations = _fit_total(
-        [min(rhythm.target_seconds, shot.duration) for shot in chosen],
-        [min(rhythm.max_seconds, shot.duration) for shot in chosen],
-        rhythm,
+        durations = _fit_total(
+            [min(rhythm.target_seconds, shot.duration) for shot in chosen],
+            [min(rhythm.max_seconds, shot.duration) for shot in chosen],
+            rhythm,
+        )
+        if durations is not None:
+            return [_centred(shot, length) for shot, length in zip(chosen, durations)]
+
+    raise NotEnoughFootage(
+        f"{len(usable)} usable shots never redistributed into a "
+        f"{rhythm.min_total}-{rhythm.max_total}s total after {_MAX_ATTEMPTS} draws"
     )
-    return [_centred(shot, length) for shot, length in zip(chosen, durations)]
 
 
 def _centred(shot: Shot, length: float) -> Segment:
@@ -47,11 +61,13 @@ def _fit_total(
     durations: list[float],
     ceilings: list[float],
     rhythm: RhythmSpec,
-) -> list[float]:
+) -> list[float] | None:
     """Stretch or squeeze segment lengths until the total lands in range.
 
     Each segment stays within its own floor and ceiling, so a short shot is
-    never asked to give more than it has.
+    never asked to give more than it has. Returns None when this particular
+    draw of shots has no slack left in the direction it needs -- the caller
+    tries a fresh draw rather than treating one unlucky sample as fatal.
     """
     total = sum(durations)
 
@@ -62,10 +78,7 @@ def _fit_total(
 
     total = sum(durations)
     if not rhythm.min_total - 1e-6 <= total <= rhythm.max_total + 1e-6:
-        raise NotEnoughFootage(
-            f"cannot reach a {rhythm.min_total}-{rhythm.max_total}s total "
-            f"from {len(durations)} segments (best was {total:.2f}s)"
-        )
+        return None
     return durations
 
 
