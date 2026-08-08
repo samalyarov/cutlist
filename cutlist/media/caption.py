@@ -2,11 +2,21 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
-from cutlist.presets import CaptionSpec, OutputSpec
+from cutlist.presets import CaptionSpec, OutputSpec, PresetError
 
 TOP_MARGIN_FRAC = 0.015
+BOTTOM_MARGIN_FRAC = 0.015
 MAX_WIDTH_FRAC = 0.92
 MIN_FONT_SIZE = 8
+
+# (margin fraction, PIL anchor) for each position a preset can request.
+# Anchor's second letter picks which edge of the text the (x, y) point
+# pins to: "a" (ascender) for top placement, "d" (descender) for bottom --
+# so the margin is measured from the same edge the text is anchored on.
+_POSITIONS = {
+    "top_center": (TOP_MARGIN_FRAC, "ma"),
+    "bottom_center": (BOTTOM_MARGIN_FRAC, "md"),
+}
 
 FONT_CANDIDATES = [
     Path(r"C:\Windows\Fonts\arialbd.ttf"),
@@ -85,6 +95,10 @@ def _fit_font(
 
 
 def render_caption(spec: CaptionSpec, output: OutputSpec, dest: Path) -> Path:
+    if spec.position not in _POSITIONS:
+        raise PresetError(
+            f"caption.position must be one of {sorted(_POSITIONS)}, got {spec.position!r}"
+        )
     dest.parent.mkdir(parents=True, exist_ok=True)
 
     font_path = resolve_font(spec.font)
@@ -104,20 +118,23 @@ def render_caption(spec: CaptionSpec, output: OutputSpec, dest: Path) -> Path:
     stroke = max(1, round(font.size * stroke_ratio))
 
     # The outline is drawn around the glyph's own edges, so it can extend
-    # above the top of the text by up to a stroke width. A margin thinner
-    # than the stroke lets that overflow run past the canvas edge and clip.
-    top_margin = max(round(output.height * TOP_MARGIN_FRAC), stroke)
+    # past the near edge of the text by up to a stroke width. A margin
+    # thinner than the stroke lets that overflow run past the canvas edge
+    # and clip -- true whichever edge the caption is anchored to.
+    margin_frac, anchor = _POSITIONS[spec.position]
+    margin = max(round(output.height * margin_frac), stroke)
+    y = margin if spec.position == "top_center" else output.height - margin
 
     canvas = Image.new("RGBA", (output.width, output.height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(canvas)
     draw.text(
-        (output.width // 2, top_margin),
+        (output.width // 2, y),
         spec.text,
         font=font,
         fill=spec.fill,
         stroke_width=stroke,
         stroke_fill=spec.outline,
-        anchor="ma",
+        anchor=anchor,
     )
 
     canvas.save(dest)

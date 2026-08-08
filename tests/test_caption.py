@@ -5,7 +5,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from cutlist.media import caption as caption_module
 from cutlist.media.caption import MAX_WIDTH_FRAC, FontError, render_caption, resolve_font
-from cutlist.presets import CaptionSpec, OutputSpec
+from cutlist.presets import CaptionSpec, OutputSpec, PresetError
 
 OUTPUT = OutputSpec(width=854, height=480, fps=25, crf=20)
 
@@ -48,6 +48,32 @@ def test_is_horizontally_centred(tmp_path):
     left_gap = box[0]
     right_gap = image.width - box[2]
     assert abs(left_gap - right_gap) <= 2
+
+
+def test_bottom_center_draws_in_the_bottom_band(tmp_path):
+    spec = CaptionSpec(text="ЗАВТРА РИЛ СУББОТА", position="bottom_center")
+    dest = render_caption(spec, OUTPUT, tmp_path / "caption.png")
+    image = Image.open(dest)
+    alpha = image.getchannel("A")
+    bottom = alpha.crop((0, int(image.height * 0.75), image.width, image.height))
+    assert bottom.getbbox() is not None
+
+
+def test_bottom_center_leaves_the_top_untouched(tmp_path):
+    spec = CaptionSpec(text="ЗАВТРА РИЛ СУББОТА", position="bottom_center")
+    dest = render_caption(spec, OUTPUT, tmp_path / "caption.png")
+    image = Image.open(dest)
+    alpha = image.getchannel("A")
+    top = alpha.crop((0, 0, image.width, image.height // 2))
+    assert top.getbbox() is None
+
+
+def test_unrecognised_position_raises_preset_error(tmp_path):
+    # A typo in the preset's caption.position should be loud, not a silent
+    # fall-through to whatever the default happens to render.
+    spec = CaptionSpec(text="ЗАВТРА РИЛ СУББОТА", position="middle_left")
+    with pytest.raises(PresetError):
+        render_caption(spec, OUTPUT, tmp_path / "caption.png")
 
 
 def test_resolve_font_finds_something():
