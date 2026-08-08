@@ -54,15 +54,32 @@ def encode_segment(
     return dest
 
 
+def _concat_line(part: Path) -> str:
+    """Format one entry for the concat demuxer's file listing.
+
+    The demuxer parses each path like a single-quoted shell token, so a
+    literal `'` in the path has to close the quote, escape one, and reopen
+    it -- otherwise any film with an apostrophe in its name breaks the list.
+    """
+    escaped = part.resolve().as_posix().replace("'", "'\\''")
+    return f"file '{escaped}'"
+
+
 def concat(parts: list[Path], dest: Path) -> Path:
     """Join encoded segments without re-encoding."""
     if not parts:
         raise ValueError("nothing to concatenate")
 
     dest.parent.mkdir(parents=True, exist_ok=True)
-    listing = dest.parent / f"{dest.stem}_parts.txt"
+    # parts live in the caller's scratch directory, not dest's. Writing the
+    # listing there too -- rather than next to dest -- keeps two renders
+    # that happen to share a dest stem from colliding, and means a crash
+    # hard enough to skip the finally below still only leaves a stray file
+    # in scratch (which render_clip discards) rather than in the user's
+    # output directory.
+    listing = parts[0].parent / f"{dest.stem}_parts.txt"
     listing.write_text(
-        "\n".join(f"file '{p.resolve().as_posix()}'" for p in parts),
+        "\n".join(_concat_line(p) for p in parts),
         encoding="utf-8",
     )
 
@@ -96,6 +113,13 @@ def render_clip(
             for i, segment in enumerate(segments)
         ]
         concat(parts, dest)
+    except Exception:
+        # ffmpeg's -y truncates dest before it can fail mid-write, and a
+        # stale copy from an earlier crash could already be sitting there.
+        # Either way, a missing file is a better failure signal than one
+        # that looks like a valid clip but isn't.
+        dest.unlink(missing_ok=True)
+        raise
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
     return dest
