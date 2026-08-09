@@ -1,16 +1,21 @@
 import functools
+import hashlib
 import json
 import random
 import uuid
+from dataclasses import asdict
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 import typer
 
+from cutlist.db import store
+from cutlist.db.schema import connect
 from cutlist.media.caption import FontError, render_caption
 from cutlist.media.probe import probe as probe_film
 from cutlist.media.render import render_clip
 from cutlist.media.shots import detect_shots
-from cutlist.paths import Workspace
+from cutlist.paths import Workspace, film_id
 from cutlist.presets import PresetError, load_preset
 from cutlist.select.naive import NotEnoughFootage, draft_picks
 from cutlist.shell import ToolError
@@ -85,6 +90,29 @@ def shots(
     typer.echo(f"median {lengths[len(lengths) // 2]:.2f}s, longest {lengths[-1]:.2f}s")
 
 
+def _cutlist_version() -> str:
+    """Which build produced a run.
+
+    Recorded so ratings from the random-selection era are never silently
+    pooled with ratings from a later scoring era -- they measure different
+    things.
+    """
+    try:
+        return version("cutlist")
+    except PackageNotFoundError:
+        return "unknown"
+
+
+def _preset_fingerprint(path: Path, spec) -> tuple[str, str]:
+    """Hash the preset file, and serialise the resolved preset.
+
+    The hash groups runs that used an identical preset. The JSON makes each
+    run self-describing after the YAML is edited or deleted.
+    """
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    return digest, json.dumps(asdict(spec), sort_keys=True)
+
+
 @app.command()
 @handle_errors
 def draft(
@@ -111,7 +139,39 @@ def draft(
     found = detect_shots(film)
     typer.echo(f"{len(found)} shots")
 
+    # A run with no recorded seed cannot be reproduced, and an unreproducible
+    # run cannot have its provenance rebuilt if anything downstream is lost.
+    # Generate one rather than leaving it to chance.
+    if seed is None:
+        seed = random.randrange(2**31)
     rng = random.Random(seed)
+
+    info = probe_film(film)
+    film_hash = film_id(film)
+    conn = connect(workspace.database)
+    store.record_film(
+        conn,
+        film_hash=film_hash,
+        display_name=film.name,
+        duration_s=info.duration,
+        fps=info.fps,
+        width=info.width,
+        height=info.height,
+    )
+
+    preset_sha256, preset_json = _preset_fingerprint(preset, spec)
+    # Opened before the first render, so a run that dies partway still
+    # records which source it was pointed at.
+    run_id = store.start_run(
+        conn,
+        preset_name=spec.name,
+        preset_sha256=preset_sha256,
+        preset_json=preset_json,
+        caption_text=spec.caption.text,
+        seed=seed,
+        cutlist_version=_cutlist_version(),
+        film_hashes=[film_hash],
+    )
 
     # Scoped by a random token rather than just the clip index, and rooted
     # in the cache dir rather than the (shared, user-facing) output dir --
@@ -142,7 +202,26 @@ def draft(
             raise typer.Exit(code=1) from None
 
         length = sum(s.duration for s in segments)
+        store.record_clip(
+            conn,
+            run_id=run_id,
+            ordinal=n,
+            path=clip.relative_to(root).as_posix(),
+            duration_s=length,
+            segments=[
+                store.SegmentRecord(
+                    film_hash=film_hash,
+                    seg_start_s=pick.segment.start,
+                    seg_end_s=pick.segment.end,
+                    shot_start_s=pick.shot.start,
+                    shot_end_s=pick.shot.end,
+                    shot_index=pick.shot.index,
+                )
+                for pick in picks
+            ],
+        )
+
         typer.echo(f"{clip.name}  {len(segments)} segments  {length:.1f}s")
         written += 1
 
-    typer.echo(f"\nwrote {written} clips to {destination}")
+    typer.echo(f"\nwrote {written} clips to {destination}  (seed {seed})")

@@ -61,3 +61,13 @@ class Workspace:
         path = self.output / film.stem / preset_name
         path.mkdir(parents=True, exist_ok=True)
         return path
+
+    @property
+    def database(self) -> Path:
+        """The ratings store.
+
+        Deliberately at the workspace root rather than under cache/: taste
+        generalises across films, and the cache is regenerable. Deleting it
+        must not destroy a month of judgements.
+        """
+        return self.root / "cutlist.sqlite"
