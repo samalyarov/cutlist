@@ -1,8 +1,8 @@
 # cutlist
 
-Point it at a feature film and it produces short captioned clips: silent
+Point it at a feature video and it produces short captioned clips: silent
 854x480 MP4s, 9-15 seconds each, assembled from segments cut out of
-different parts of the film, with a caption burned across the top. Built
+different parts of the video, with a caption burned into the video. Originally built
 for Telegram, where "GIFs" are really silent MP4s.
 
 ## Install
@@ -25,9 +25,9 @@ command. Run the tests with:
 ## Commands
 
 ```
-cutlist probe <film>
-cutlist shots <film> [--json]
-cutlist draft <film> --preset <preset.yaml> [--count N] [--caption "..."] [--root DIR] [--seed N]
+cutlist probe <video>
+cutlist shots <video> [--json]
+cutlist draft <video> --preset <preset.yaml> [--count N] [--caption "..."] [--root DIR] [--seed N]
 ```
 
 `probe` reports what ffprobe makes of the file: dimensions, fps, duration,
@@ -37,10 +37,10 @@ whether it has audio.
 
 `draft` is the one that produces output. It detects shots, picks segments
 according to the preset's rhythm rules, and renders `--count` clips (10 by
-default) to `output/<film>/<preset>/`. Example:
+default) to `output/<video>/<preset>/`. Example:
 
 ```
-cutlist draft "input/The Big Lebowski 1998.1080p.BluRay.x264.anoXmous_.mp4" \
+cutlist draft "input/my-video.mp4" \
   --preset presets/real_saturday.yaml \
   --count 5 \
   --caption "ЗАВТРА РИЛ СУББОТА"
