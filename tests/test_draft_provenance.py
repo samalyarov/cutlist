@@ -3,8 +3,10 @@ import json
 import pytest
 from typer.testing import CliRunner
 
+import cutlist.cli as cli
 from cutlist.cli import app
 from cutlist.db.schema import connect
+from cutlist.shell import ToolError
 
 runner = CliRunner()
 
@@ -110,3 +112,47 @@ def test_recorded_segment_durations_match_the_clip_duration(
             (clip["id"],),
         ).fetchone()[0]
         assert abs(total - clip["duration_s"]) < 0.05
+
+
+def test_a_mid_loop_failure_still_records_the_run_and_the_clips_that_landed(
+    fixture_film, preset_file, tmp_path, monkeypatch
+):
+    # Same flaky-render mechanism as
+    # test_draft_reports_partial_progress_on_mid_loop_failure in
+    # tests/test_cli.py: let the first render through, fail the second.
+    original = cli.render_clip
+    calls = {"n": 0}
+
+    def flaky(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise ToolError("ffmpeg blew up")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(cli, "render_clip", flaky)
+
+    result = _draft(fixture_film, preset_file, tmp_path, extra=["--count", "3"])
+
+    # Confirm this is genuinely a mid-loop failure, not one at startup.
+    assert result.exit_code != 0
+    assert "wrote 1 of 3 clips; failed on 02: ffmpeg blew up" in result.output
+
+    conn = connect(tmp_path / "cutlist.sqlite")
+
+    runs = conn.execute("SELECT * FROM run").fetchall()
+    assert len(runs) == 1
+    run = runs[0]
+
+    run_films = conn.execute(
+        "SELECT * FROM run_film WHERE run_id = ?", (run["id"],)
+    ).fetchall()
+    assert len(run_films) == 1
+
+    clips = conn.execute("SELECT * FROM clip").fetchall()
+    assert len(clips) == 1
+    clip = clips[0]
+
+    segments = conn.execute(
+        "SELECT * FROM segment WHERE clip_id = ?", (clip["id"],)
+    ).fetchall()
+    assert segments
