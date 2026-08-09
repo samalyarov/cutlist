@@ -1,8 +1,6 @@
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 1
-
 # Ratings are the only thing here that cannot be regenerated, which is why
 # they carry their own copy of what they refer to: a clip verdict dies with
 # its clip (it describes one specific assembly), but a shot mark outlives
@@ -99,6 +97,10 @@ GROUP BY clip_id, film_hash;
 """
 
 MIGRATIONS = [_V1]
+
+# Derived rather than written by hand to prevent drift: if a later task appends
+# _V2 without bumping this constant, the constant would silently become a lie.
+SCHEMA_VERSION = len(MIGRATIONS)
 
 
 def migrate(conn: sqlite3.Connection) -> None:
