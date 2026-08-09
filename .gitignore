@@ -33,9 +33,6 @@ work/
 output/
 references/
 
-# Internal working documents
-docs/
-
 # Media, anywhere in the tree. Drop a `!path/to/clip.mp4` line below if a
 # specific clip ever needs to be tracked as a test fixture.
 *.mp4
