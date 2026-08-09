@@ -12,7 +12,7 @@ from cutlist.media.render import render_clip
 from cutlist.media.shots import detect_shots
 from cutlist.paths import Workspace
 from cutlist.presets import PresetError, load_preset
-from cutlist.select.naive import NotEnoughFootage, draft_segments
+from cutlist.select.naive import NotEnoughFootage, draft_picks
 from cutlist.shell import ToolError
 
 app = typer.Typer(help="Assemble short captioned clips from a feature film.")
@@ -129,7 +129,8 @@ def draft(
     written = 0
     for n in range(1, count + 1):
         try:
-            segments = draft_segments(found, spec.rhythm, rng)
+            picks = draft_picks(found, spec.rhythm, rng)
+            segments = [pick.segment for pick in picks]
             clip = destination / f"{n:02d}.mp4"
             render_clip(
                 film, segments, caption_png, spec.output, clip, scratch_root / f"{n:02d}"

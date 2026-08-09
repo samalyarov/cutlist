@@ -1,4 +1,5 @@
 import random
+from dataclasses import dataclass
 
 from cutlist.media.render import Segment
 from cutlist.media.shots import Shot
@@ -16,11 +17,24 @@ class NotEnoughFootage(RuntimeError):
 _MAX_ATTEMPTS = 20
 
 
-def draft_segments(
+@dataclass(frozen=True)
+class Pick:
+    """A chosen segment together with the shot it was cut from.
+
+    Rendering only needs the segment, but provenance needs the shot: a
+    judgement about "this moment" and one about "this take" are different
+    claims, and neither is recoverable from the other afterwards.
+    """
+
+    shot: Shot
+    segment: Segment
+
+
+def draft_picks(
     shots: list[Shot],
     rhythm: RhythmSpec,
     rng: random.Random,
-) -> list[Segment]:
+) -> list[Pick]:
     """Pick segments at random, subject to the preset's duration rules.
 
     Selection here is deliberately blind — it only enforces the rhythm. Scoring
@@ -43,7 +57,10 @@ def draft_segments(
             rhythm,
         )
         if durations is not None:
-            return [_centred(shot, length) for shot, length in zip(chosen, durations)]
+            return [
+                Pick(shot=shot, segment=_centred(shot, length))
+                for shot, length in zip(chosen, durations)
+            ]
 
     raise NotEnoughFootage(
         f"{len(usable)} usable shots never redistributed into a "
