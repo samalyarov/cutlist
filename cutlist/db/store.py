@@ -36,22 +36,22 @@ def record_film(
 ) -> None:
     """Register a source, or refresh what we know about one already seen."""
     now = _now()
-    conn.execute(
-        """
-        INSERT INTO film (film_hash, display_name, duration_s, fps, width, height,
-                          first_seen_at, last_seen_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT (film_hash) DO UPDATE SET
-            display_name = excluded.display_name,
-            duration_s   = COALESCE(excluded.duration_s, film.duration_s),
-            fps          = COALESCE(excluded.fps, film.fps),
-            width        = COALESCE(excluded.width, film.width),
-            height       = COALESCE(excluded.height, film.height),
-            last_seen_at = excluded.last_seen_at
-        """,
-        (film_hash, display_name, duration_s, fps, width, height, now, now),
-    )
-    conn.commit()
+    with conn:
+        conn.execute(
+            """
+            INSERT INTO film (film_hash, display_name, duration_s, fps, width, height,
+                              first_seen_at, last_seen_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (film_hash) DO UPDATE SET
+                display_name = excluded.display_name,
+                duration_s   = COALESCE(excluded.duration_s, film.duration_s),
+                fps          = COALESCE(excluded.fps, film.fps),
+                width        = COALESCE(excluded.width, film.width),
+                height       = COALESCE(excluded.height, film.height),
+                last_seen_at = excluded.last_seen_at
+            """,
+            (film_hash, display_name, duration_s, fps, width, height, now, now),
+        )
 
 
 def start_run(
@@ -70,21 +70,21 @@ def start_run(
     Called before any clip is rendered, so a run that fails partway still
     leaves a record of its inputs.
     """
-    cursor = conn.execute(
-        """
-        INSERT INTO run (preset_name, preset_sha256, preset_json, caption_text,
-                         seed, cutlist_version, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-        """,
-        (preset_name, preset_sha256, preset_json, caption_text, seed,
-         cutlist_version, _now()),
-    )
-    run_id = int(cursor.lastrowid)
-    conn.executemany(
-        "INSERT OR IGNORE INTO run_film (run_id, film_hash) VALUES (?, ?)",
-        [(run_id, film_hash) for film_hash in film_hashes],
-    )
-    conn.commit()
+    with conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO run (preset_name, preset_sha256, preset_json, caption_text,
+                             seed, cutlist_version, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (preset_name, preset_sha256, preset_json, caption_text, seed,
+             cutlist_version, _now()),
+        )
+        run_id = int(cursor.lastrowid)
+        conn.executemany(
+            "INSERT OR IGNORE INTO run_film (run_id, film_hash) VALUES (?, ?)",
+            [(run_id, film_hash) for film_hash in film_hashes],
+        )
     return run_id
 
 
@@ -98,22 +98,22 @@ def record_clip(
     segments: list[SegmentRecord],
 ) -> int:
     """Record one rendered clip and everything it was assembled from."""
-    cursor = conn.execute(
-        "INSERT INTO clip (run_id, ordinal, path, duration_s) VALUES (?, ?, ?, ?)",
-        (run_id, ordinal, path, duration_s),
-    )
-    clip_id = int(cursor.lastrowid)
-    conn.executemany(
-        """
-        INSERT INTO segment (clip_id, position, film_hash, seg_start_s, seg_end_s,
-                             shot_start_s, shot_end_s, shot_index)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        [
-            (clip_id, position, s.film_hash, s.seg_start_s, s.seg_end_s,
-             s.shot_start_s, s.shot_end_s, s.shot_index)
-            for position, s in enumerate(segments)
-        ],
-    )
-    conn.commit()
+    with conn:
+        cursor = conn.execute(
+            "INSERT INTO clip (run_id, ordinal, path, duration_s) VALUES (?, ?, ?, ?)",
+            (run_id, ordinal, path, duration_s),
+        )
+        clip_id = int(cursor.lastrowid)
+        conn.executemany(
+            """
+            INSERT INTO segment (clip_id, position, film_hash, seg_start_s, seg_end_s,
+                                 shot_start_s, shot_end_s, shot_index)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (clip_id, position, s.film_hash, s.seg_start_s, s.seg_end_s,
+                 s.shot_start_s, s.shot_end_s, s.shot_index)
+                for position, s in enumerate(segments)
+            ],
+        )
     return clip_id

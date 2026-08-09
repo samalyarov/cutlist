@@ -50,6 +50,35 @@ def test_record_film_is_idempotent_and_updates_last_seen(conn):
     assert rows[0]["first_seen_at"] <= rows[0]["last_seen_at"]
 
 
+def test_record_film_preserves_metadata_from_prior_sighting(conn):
+    """Verify COALESCE actually preserves prior values when fewer arguments provided."""
+    # First sighting with full metadata
+    store.record_film(
+        conn, film_hash="test_hash", display_name="full_metadata.mp4",
+        duration_s=100.0, fps=30.0, width=1920, height=1080,
+    )
+    first_seen = conn.execute("SELECT first_seen_at FROM film WHERE film_hash = ?",
+                              ("test_hash",)).fetchone()["first_seen_at"]
+
+    # Second sighting with minimal metadata
+    store.record_film(
+        conn, film_hash="test_hash", display_name="updated.mp4",
+    )
+
+    row = conn.execute("SELECT * FROM film WHERE film_hash = ?", ("test_hash",)).fetchone()
+    # Metadata should be preserved
+    assert row["duration_s"] == 100.0
+    assert row["fps"] == 30.0
+    assert row["width"] == 1920
+    assert row["height"] == 1080
+    # Display name should be updated
+    assert row["display_name"] == "updated.mp4"
+    # First seen should be unchanged
+    assert row["first_seen_at"] == first_seen
+    # Last seen should advance (or at least be >= first_seen)
+    assert row["last_seen_at"] >= first_seen
+
+
 def test_start_run_records_every_source_it_was_pointed_at(conn):
     a, b = _film(conn, "aaa", "a.mp4"), _film(conn, "bbb", "b.mp4")
     run_id = _run(conn, [a, b])
@@ -119,3 +148,36 @@ def test_deleting_a_clip_removes_its_segments(conn):
     conn.execute("DELETE FROM clip WHERE id = ?", (clip_id,))
     conn.commit()
     assert conn.execute("SELECT COUNT(*) FROM segment").fetchone()[0] == 0
+
+
+def test_failed_segment_insert_does_not_leave_orphaned_clip(conn):
+    """Verify transaction rollback prevents orphaned clips when segment insert fails."""
+    import sqlite3
+
+    film_hash = _film(conn)
+    run_id = _run(conn, [film_hash])
+
+    # Attempt to record a clip with a segment referencing an unregistered film_hash
+    # This should fail on the foreign key constraint
+    unregistered_hash = "nonexistent_film"
+    with pytest.raises(sqlite3.IntegrityError):
+        store.record_clip(
+            conn, run_id=run_id, ordinal=1, path="output/01.mp4", duration_s=6.0,
+            segments=[_segment(unregistered_hash, 0)],
+        )
+
+    # Verify no clip row was left behind
+    clip_count = conn.execute("SELECT COUNT(*) FROM clip").fetchone()[0]
+    assert clip_count == 0, "No orphaned clip should exist after failed insert"
+
+    # Verify that a subsequent successful record_clip does not drag in the failed one
+    clip_id = store.record_clip(
+        conn, run_id=run_id, ordinal=1, path="output/01.mp4", duration_s=6.0,
+        segments=[_segment(film_hash, 0)],
+    )
+    # Still only one clip
+    final_count = conn.execute("SELECT COUNT(*) FROM clip").fetchone()[0]
+    assert final_count == 1
+    # And it's the one we just recorded
+    recorded_clip = conn.execute("SELECT id FROM clip").fetchone()
+    assert recorded_clip["id"] == clip_id
