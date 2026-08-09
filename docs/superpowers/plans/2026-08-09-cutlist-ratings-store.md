@@ -2225,7 +2225,7 @@ runner = CliRunner()
 PAGE = Path("cutlist/review/page.html").read_text(encoding="utf-8")
 
 FORBIDDEN = [
-    "Inter", "#6366f1", "#8b5cf6", "gradient", "backdrop-filter",
+    "Inter", "#6366f1", "#8b5cf6", "radial-gradient", "backdrop-filter",
     "cdn.", "googleapis", "unpkg", "jsdelivr",
 ]
 
@@ -2233,6 +2233,16 @@ FORBIDDEN = [
 @pytest.mark.parametrize("marker", FORBIDDEN)
 def test_page_avoids_generated_default_markers(marker):
     assert marker.lower() not in PAGE.lower()
+
+
+def test_the_only_gradient_is_the_veto_hatch():
+    """Decorative gradients are the slop marker; a 45-degree hatch is texture.
+
+    `veto` has to remove presence rather than add colour, and a hatch is how
+    that reads without spending the colour budget.
+    """
+    gradients = re.findall(r"[a-z-]*gradient\(", PAGE)
+    assert set(gradients) <= {"repeating-linear-gradient("}, gradients
 
 
 def test_page_inlines_its_css_and_js():
