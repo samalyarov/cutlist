@@ -65,6 +65,20 @@ class ReviewHandler(BaseHTTPRequestHandler):
         candidate = self.config["root"] / "input" / name
         return candidate if candidate.exists() else None
 
+    def _resolve_within_root(self, relative: str) -> Path | None:
+        """Join a workspace-relative path, refusing to leave the workspace.
+
+        `relative` comes from `clip.path` in the database. `draft` only ever
+        writes a path already relative to root, but nothing here enforces
+        that, so a future writer landing an absolute path or a `..` segment
+        must not gain filesystem access outside root.
+        """
+        root = self.config["root"].resolve()
+        candidate = (self.config["root"] / relative).resolve()
+        if not candidate.is_relative_to(root):
+            return None
+        return candidate
+
     def _send_file(self, path: Path, content_type: str) -> None:
         """Serve a file, honouring a single-range request.
 
@@ -86,9 +100,14 @@ class ReviewHandler(BaseHTTPRequestHandler):
             return
 
         first, last = match.group(1), match.group(2)
-        start = int(first) if first else 0
-        end = int(last) if last else size - 1
-        end = min(end, size - 1)
+        if first == "" and last != "":
+            # Suffix form ("bytes=-500"): the last N bytes, not bytes 0..N.
+            start = max(size - int(last), 0)
+            end = size - 1
+        else:
+            start = int(first) if first else 0
+            end = int(last) if last else size - 1
+            end = min(end, size - 1)
 
         if start > end or start >= size:
             self.send_response(416)
@@ -154,8 +173,8 @@ class ReviewHandler(BaseHTTPRequestHandler):
             if relative is None:
                 self._send_error(404, "no such clip")
                 return
-            clip_path = self.config["root"] / relative
-            if not clip_path.exists():
+            clip_path = self._resolve_within_root(relative)
+            if clip_path is None or not clip_path.exists():
                 self._send_error(404, "clip file is missing")
                 return
             self._send_file(clip_path, "video/mp4")
@@ -190,7 +209,11 @@ class ReviewHandler(BaseHTTPRequestHandler):
             self._send_error(404, "not found")
             return
 
-        length = int(self.headers.get("Content-Length") or 0)
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            self._send_error(400, "Content-Length must be an integer")
+            return
         try:
             payload = json.loads(self.rfile.read(length) or b"{}")
         except json.JSONDecodeError:
@@ -203,7 +226,8 @@ class ReviewHandler(BaseHTTPRequestHandler):
         marks = payload.get("marks") or []
 
         # Everything is validated before anything is written, so a bad mark
-        # never leaves a verdict recorded without it.
+        # never leaves a verdict recorded without it, and no earlier mark in
+        # the same list is left committed while a later one fails.
         if not isinstance(clip_id, int) or store.clip_detail(conn, clip_id) is None:
             self._send_error(400, "clip_id must name a recorded clip")
             return
@@ -214,8 +238,12 @@ class ReviewHandler(BaseHTTPRequestHandler):
             if not isinstance(entry, dict) or entry.get("mark") not in store.MARKS:
                 self._send_error(400, f"mark must be one of {', '.join(store.MARKS)}")
                 return
-            if not isinstance(entry.get("segment_id"), int):
+            segment_id = entry.get("segment_id")
+            if not isinstance(segment_id, int):
                 self._send_error(400, "each mark needs an integer segment_id")
+                return
+            if store.segment_by_id(conn, segment_id) is None:
+                self._send_error(400, f"no such segment: {segment_id}")
                 return
 
         try:

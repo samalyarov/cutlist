@@ -132,6 +132,33 @@ def test_a_malformed_payload_is_rejected_and_changes_nothing(server, workspace):
     assert conn.execute("SELECT COUNT(*) FROM clip_rating").fetchone()[0] == 0
 
 
+def test_a_partially_invalid_mark_list_writes_nothing(server, workspace):
+    """One valid mark plus one referencing an unknown segment must both fail.
+
+    Marks are written one at a time inside store.mark_shot; if validation
+    only checked shapes and not existence, the valid mark could commit
+    before the invalid one raised, leaving a stray row behind a 400.
+    """
+    clips = json.loads(_get(f"{server}/api/clips")[1])
+    detail = json.loads(_get(f"{server}/api/clip/{clips[0]['id']}")[1])
+    valid_segment_id = detail["segments"][0]["id"]
+
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        _post(f"{server}/api/ratings", {
+            "clip_id": clips[0]["id"],
+            "verdict": "ok",
+            "marks": [
+                {"segment_id": valid_segment_id, "mark": "good"},
+                {"segment_id": 9999999, "mark": "good"},
+            ],
+        })
+    assert exc.value.code == 400
+
+    conn = connect(workspace / "cutlist.sqlite")
+    assert conn.execute("SELECT COUNT(*) FROM shot_rating").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM clip_rating").fetchone()[0] == 0
+
+
 def test_video_is_served(server):
     clips = json.loads(_get(f"{server}/api/clips")[1])
     status, body, headers = _get(f"{server}/media/clip/{clips[0]['id']}")
@@ -141,14 +168,30 @@ def test_video_is_served(server):
     assert len(body) > 0
 
 
-def test_video_honours_a_range_request(server):
+def test_video_honours_a_range_request(server, workspace):
     clips = json.loads(_get(f"{server}/api/clips")[1])
     request = urllib.request.Request(f"{server}/media/clip/{clips[0]['id']}")
     request.add_header("Range", "bytes=0-99")
     with urllib.request.urlopen(request) as response:
         assert response.status == 206
         assert response.headers["Content-Range"].startswith("bytes 0-99/")
-        assert len(response.read()) == 100
+        body = response.read()
+
+    on_disk = (workspace / "output" / "fixture" / "p" / "01.mp4").read_bytes()
+    assert body == on_disk[:100]
+
+
+def test_video_honours_a_suffix_range_request(server, workspace):
+    clips = json.loads(_get(f"{server}/api/clips")[1])
+    request = urllib.request.Request(f"{server}/media/clip/{clips[0]['id']}")
+    request.add_header("Range", "bytes=-100")
+    with urllib.request.urlopen(request) as response:
+        assert response.status == 206
+        body = response.read()
+
+    on_disk = (workspace / "output" / "fixture" / "p" / "01.mp4").read_bytes()
+    assert len(body) == 100
+    assert body == on_disk[-100:]
 
 
 def test_thumbnail_is_served(server):
