@@ -11,6 +11,7 @@ import typer
 
 from cutlist.db import store
 from cutlist.db.schema import connect
+from cutlist.feedback.rate import parse_segment_marks
 from cutlist.media.caption import FontError, render_caption
 from cutlist.media.probe import probe as probe_film
 from cutlist.media.render import render_clip
@@ -24,10 +25,14 @@ app = typer.Typer(help="Assemble short captioned clips from a feature film.")
 
 # Every failure mode a command can hit that isn't a click/typer usage error:
 # a missing input file, a broken preset, a font that can't render the
-# caption, footage too thin to draft from, or an external tool dying.
-# A person running this by hand should see one clean line, not a stack
-# trace through scenedetect/opencv/ffmpeg internals.
-HANDLED_ERRORS = (ToolError, PresetError, FontError, NotEnoughFootage, FileNotFoundError)
+# caption, footage too thin to draft from, an external tool dying, or a
+# rating command asked to touch a clip/segment/verdict/mark that doesn't
+# exist or doesn't validate. A person running this by hand should see one
+# clean line, not a stack trace through scenedetect/opencv/ffmpeg internals.
+HANDLED_ERRORS = (
+    ToolError, PresetError, FontError, NotEnoughFootage, FileNotFoundError,
+    LookupError, ValueError,
+)
 
 
 def handle_errors(fn):
@@ -225,3 +230,71 @@ def draft(
         written += 1
 
     typer.echo(f"\nwrote {written} clips to {destination}  (seed {seed})")
+
+
+@app.command()
+@handle_errors
+def rate(
+    clip: str = typer.Argument(..., help="Path of the clip, as written by draft."),
+    verdict: str = typer.Argument(..., help="fire, ok or no."),
+    segments: str | None = typer.Option(
+        None, "--segments", help='Marks by position, e.g. "1:good,3:veto".'
+    ),
+    note: str | None = typer.Option(None, "--note", help="Free text to store with the verdict."),
+    root: Path = typer.Option(Path("."), "--root", help="Workspace root."),
+) -> None:
+    """Rate a clip, and optionally mark the segments inside it."""
+    workspace = Workspace(root=root)
+    conn = connect(workspace.database)
+
+    # Normalised so `output/01.mp4` and `output\01.mp4` both resolve.
+    wanted = Path(clip).as_posix()
+    row = store.clip_by_path(conn, wanted)
+    if row is None:
+        raise LookupError(f"no recorded clip at {wanted}")
+
+    marks = parse_segment_marks(segments) if segments else []
+    detail = store.clip_detail(conn, row["id"])
+    by_position = {s["position"] + 1: s["id"] for s in detail["segments"]}
+
+    # Validated before anything is written, so a typo in one pair does not
+    # leave half the marks recorded.
+    for position, _ in marks:
+        if position not in by_position:
+            raise LookupError(
+                f"clip has {len(by_position)} segments; no segment {position}"
+            )
+
+    store.rate_clip(conn, clip_id=row["id"], verdict=verdict, note=note)
+    for position, mark in marks:
+        store.mark_shot(conn, segment_id=by_position[position], mark=mark)
+
+    typer.echo(f"{wanted}: {verdict}" + (f", {len(marks)} segment marks" if marks else ""))
+
+
+@app.command()
+@handle_errors
+def ratings(
+    as_json: bool = typer.Option(False, "--json", help="Emit the summary as JSON."),
+    root: Path = typer.Option(Path("."), "--root", help="Workspace root."),
+) -> None:
+    """Report what has been rated so far."""
+    conn = connect(Workspace(root=root).database)
+    result = store.summary(conn)
+
+    if as_json:
+        typer.echo(json.dumps(result, indent=2))
+        return
+
+    typer.echo(
+        f"{result['films']} films, {result['runs']} runs, "
+        f"{result['clips']} clips, {result['segments']} segments"
+    )
+    verdicts = result["verdicts"] or {}
+    marks = result["marks"] or {}
+    typer.echo("clips:    " + ", ".join(
+        f"{k} {verdicts.get(k, 0)}" for k in store.VERDICTS
+    ))
+    typer.echo("segments: " + ", ".join(
+        f"{k} {marks.get(k, 0)}" for k in store.MARKS
+    ))
