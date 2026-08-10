@@ -194,6 +194,46 @@ def test_video_honours_a_suffix_range_request(server, workspace):
     assert body == on_disk[-100:]
 
 
+def test_media_clip_refuses_a_path_that_escapes_the_workspace(server, workspace, tmp_path_factory):
+    """clip.path is trusted workspace-relative today only because `draft`
+    behaves; nothing stops some other writer (a migration, an importer, a
+    hand-edited row) from putting a `..` escape or an absolute path there.
+    Both shapes must be refused even when the escape target genuinely
+    exists on disk -- otherwise a missing-file 404 could be mistaken for
+    the guard working.
+    """
+    conn = connect(workspace / "cutlist.sqlite")
+    run_id = store.start_run(
+        conn, preset_name="p", preset_sha256="sha", preset_json="{}",
+        caption_text="TEST", seed=1, cutlist_version="0.1.0", film_hashes=["abc"],
+    )
+
+    # Relative traversal: "../escape-relative.mp4", resolved against root,
+    # lands one directory above the workspace.
+    relative_target = workspace.parent / "escape-relative.mp4"
+    relative_target.write_bytes(b"not part of the workspace")
+    relative_clip_id = store.record_clip(
+        conn, run_id=run_id, ordinal=2,
+        path="../escape-relative.mp4", duration_s=1.0, segments=[],
+    )
+
+    # Absolute path: pathlib's `/` discards the left operand entirely when
+    # the right side is absolute, so this points straight at the target
+    # regardless of root.
+    absolute_dir = tmp_path_factory.mktemp("escape-absolute")
+    absolute_target = absolute_dir / "escape-absolute.mp4"
+    absolute_target.write_bytes(b"not part of the workspace either")
+    absolute_clip_id = store.record_clip(
+        conn, run_id=run_id, ordinal=3,
+        path=str(absolute_target), duration_s=1.0, segments=[],
+    )
+
+    for clip_id in (relative_clip_id, absolute_clip_id):
+        with pytest.raises(urllib.error.HTTPError) as exc:
+            _get(f"{server}/media/clip/{clip_id}")
+        assert exc.value.code == 404
+
+
 def test_thumbnail_is_served(server):
     clips = json.loads(_get(f"{server}/api/clips")[1])
     detail = json.loads(_get(f"{server}/api/clip/{clips[0]['id']}")[1])
