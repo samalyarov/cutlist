@@ -27,11 +27,17 @@ app = typer.Typer(help="Assemble short captioned clips from a feature film.")
 # a missing input file, a broken preset, a font that can't render the
 # caption, footage too thin to draft from, an external tool dying, or a
 # rating command asked to touch a clip/segment/verdict/mark that doesn't
-# exist or doesn't validate. A person running this by hand should see one
-# clean line, not a stack trace through scenedetect/opencv/ffmpeg internals.
+# exist or doesn't validate. Deliberately a curated allowlist rather than
+# bare ValueError/LookupError -- those also catch concat()'s "nothing to
+# concatenate" invariant check and probe.py's unguarded ffprobe parsing
+# (dict indexing and float()/int()/Fraction() on "N/A"), which are bugs
+# that should traceback, not report as a clean one-liner. A person running
+# this by hand should see one clean line for a *known* failure, not a
+# stack trace through scenedetect/opencv/ffmpeg internals -- and a stack
+# trace for anything else.
 HANDLED_ERRORS = (
     ToolError, PresetError, FontError, NotEnoughFootage, FileNotFoundError,
-    LookupError, ValueError,
+    store.RatingError, store.RatingNotFound,
 )
 
 
@@ -251,7 +257,7 @@ def rate(
     wanted = Path(clip).as_posix()
     row = store.clip_by_path(conn, wanted)
     if row is None:
-        raise LookupError(f"no recorded clip at {wanted}")
+        raise store.RatingNotFound(f"no recorded clip at {wanted}")
 
     marks = parse_segment_marks(segments) if segments else []
     detail = store.clip_detail(conn, row["id"])
@@ -261,7 +267,7 @@ def rate(
     # leave half the marks recorded.
     for position, _ in marks:
         if position not in by_position:
-            raise LookupError(
+            raise store.RatingNotFound(
                 f"clip has {len(by_position)} segments; no segment {position}"
             )
 

@@ -1,4 +1,4 @@
-from cutlist.db.store import MARKS
+from cutlist.db.store import MARKS, RatingError
 
 
 def parse_segment_marks(text: str) -> list[tuple[int, str]]:
@@ -11,12 +11,12 @@ def parse_segment_marks(text: str) -> list[tuple[int, str]]:
     for chunk in text.split(","):
         chunk = chunk.strip()
         if not chunk:
-            raise ValueError(f"empty entry in --segments: {text!r}")
+            raise RatingError(f"empty entry in --segments: {text!r}")
         position, _, mark = chunk.partition(":")
         position, mark = position.strip(), mark.strip()
         if not position.isdigit():
-            raise ValueError(f"segment position must be a number, got {position!r}")
+            raise RatingError(f"segment position must be a number, got {position!r}")
         if mark not in MARKS:
-            raise ValueError(f"mark must be one of {', '.join(MARKS)}, got {mark!r}")
+            raise RatingError(f"mark must be one of {', '.join(MARKS)}, got {mark!r}")
         pairs.append((int(position), mark))
     return pairs

@@ -123,6 +123,14 @@ VERDICTS = ("fire", "ok", "no")
 MARKS = ("good", "bad", "veto")
 
 
+class RatingError(ValueError):
+    """A rating was malformed -- a verdict, mark, or --segments string."""
+
+
+class RatingNotFound(LookupError):
+    """A rating names a clip or segment that is not recorded."""
+
+
 def rate_clip(
     conn: sqlite3.Connection, *, clip_id: int, verdict: str, note: str | None = None
 ) -> int:
@@ -132,7 +140,7 @@ def rate_clip(
     changing your mind is itself recorded.
     """
     if verdict not in VERDICTS:
-        raise ValueError(f"verdict must be one of {', '.join(VERDICTS)}, got {verdict!r}")
+        raise RatingError(f"verdict must be one of {', '.join(VERDICTS)}, got {verdict!r}")
     with conn:
         cursor = conn.execute(
             "INSERT INTO clip_rating (clip_id, verdict, note, created_at) VALUES (?, ?, ?, ?)",
@@ -150,10 +158,10 @@ def mark_shot(
     so the judgement outlives the clip that occasioned it.
     """
     if mark not in MARKS:
-        raise ValueError(f"mark must be one of {', '.join(MARKS)}, got {mark!r}")
+        raise RatingError(f"mark must be one of {', '.join(MARKS)}, got {mark!r}")
     segment = conn.execute("SELECT * FROM segment WHERE id = ?", (segment_id,)).fetchone()
     if segment is None:
-        raise LookupError(f"no such segment: {segment_id}")
+        raise RatingNotFound(f"no such segment: {segment_id}")
 
     with conn:
         cursor = conn.execute(

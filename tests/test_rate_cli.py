@@ -78,6 +78,7 @@ def test_rate_rejects_an_out_of_range_segment(workspace):
     assert result.exit_code == 1
     conn = connect(workspace / "cutlist.sqlite")
     assert conn.execute("SELECT COUNT(*) FROM shot_rating").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM clip_rating").fetchone()[0] == 0
 
 
 def test_ratings_reports_counts(workspace):
@@ -92,3 +93,18 @@ def test_ratings_json_is_machine_readable(workspace):
     runner.invoke(app, ["rate", "output/01.mp4", "no", "--root", str(workspace)])
     result = runner.invoke(app, ["ratings", "--json", "--root", str(workspace)])
     assert json.loads(result.output)["verdicts"]["no"] == 1
+
+
+def test_handled_errors_does_not_swallow_bare_value_or_lookup_errors():
+    """HANDLED_ERRORS is a curated allowlist, not bare ValueError/LookupError.
+
+    Widening it to the bare builtins would also catch concat()'s "nothing to
+    concatenate" invariant check and probe.py's unguarded ffprobe parsing --
+    both real bugs that should traceback, not report as a clean one-liner.
+    A future re-widening should fail this test loudly rather than pass by
+    accident.
+    """
+    from cutlist.cli import HANDLED_ERRORS
+
+    assert not issubclass(ValueError, HANDLED_ERRORS)
+    assert not issubclass(LookupError, HANDLED_ERRORS)
