@@ -1,5 +1,297 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><title>cutlist review</title></head>
-<body><main id="app"></main></body>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cutlist review</title>
+<style>
+/* Achromatic throughout: a tinted surround shifts the viewer's white point
+   through chromatic adaptation, which changes how the footage reads. Colour
+   is spent only on the three marks, and only on the strip. */
+:root {
+  --chrome: #171717;
+  --panel: #1f1f1f;
+  --mat: #333333;
+  --seam: #0e0e0e;
+  --edge: #3a3a3a;
+  --text: #d6d6d6;
+  --dim: #8a8a8a;
+  --good: #6a9a5b;
+  --bad: #b58c3a;
+  --veto: #a3564e;
+  /* One number for the strip's caption row, so the mark bar can sit on the
+     thumbnail's bottom edge rather than at a guessed offset. */
+  --meta-h: 20px;
+  --mono: Consolas, "SF Mono", Menlo, "DejaVu Sans Mono", monospace;
+  --sans: ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; overflow: hidden; }
+body {
+  background: var(--chrome); color: var(--text);
+  font: 13px/1.35 var(--sans);
+  display: grid; grid-template-rows: auto 1fr auto auto;
+}
+header, footer {
+  padding: 8px 12px; background: var(--panel);
+  border-bottom: 1px solid var(--seam);
+  display: flex; gap: 16px; align-items: baseline;
+}
+footer { border-bottom: 0; border-top: 1px solid var(--seam); }
+header .spacer { flex: 1; }
+.count, .echo, .tc { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+/* The only other place colour is spent: a write the server refused has to be
+   noticed, because the judgement it carried is otherwise silently lost. */
+.echo.err { color: var(--veto); }
+.dim { color: var(--dim); }
+.truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+kbd {
+  font-family: var(--mono); font-size: 11px;
+  padding: 1px 4px; border: 1px solid var(--edge); border-radius: 2px;
+  background: #262626; color: var(--text);
+}
+/* Mid-gray mat, never black: a black surround exaggerates apparent contrast
+   and hides shadow detail in the frame. */
+#stage {
+  background: var(--mat);
+  display: flex; align-items: center; justify-content: center;
+  min-height: 0; padding: 24px;
+}
+video { max-width: 100%; max-height: 100%; display: block; background: #000; }
+/* Proportional widths turn the strip into a timeline: a clip's pacing is
+   visible without reading a number, which is what is being judged. Segments
+   are contiguous in the output, so they abut -- a gap would be a lie. */
+#strip {
+  display: flex; background: var(--panel);
+  border-top: 1px solid var(--seam); height: 108px;
+}
+.seg {
+  position: relative; min-width: 64px;
+  border-right: 1px solid var(--seam);
+  display: flex; flex-direction: column;
+}
+.seg:last-child { border-right: 0; }
+.seg img { width: 100%; flex: 1; min-height: 0; object-fit: cover; display: block; }
+.seg .meta {
+  height: var(--meta-h);
+  font-family: var(--mono); font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 8px; padding: 0 4px; color: var(--dim);
+}
+.seg.sel { outline: 2px solid #cfcfcf; outline-offset: -2px; }
+/* Marks live on the edge, not as a fill: a tinted thumbnail is a thumbnail
+   you can no longer judge the colour of. */
+.seg::after {
+  content: ""; position: absolute; z-index: 2;
+  left: 0; right: 0; bottom: var(--meta-h);
+  height: 3px; background: transparent;
+}
+.seg.good::after { background: var(--good); }
+.seg.bad::after  { background: var(--bad); }
+/* Veto deliberately has no bar rule. It is destructive, so it removes
+   presence rather than adding colour, and should read as absence. The hatch
+   stops at the caption row so the timecodes stay readable. */
+.seg.veto img { opacity: 0.35; }
+.seg.veto::before {
+  content: ""; position: absolute; z-index: 1;
+  left: 0; right: 0; top: 0; bottom: var(--meta-h);
+  background-image: repeating-linear-gradient(
+    45deg, transparent 0 6px, rgba(0, 0, 0, 0.35) 6px 12px);
+}
+#help {
+  position: fixed; inset: 0; background: rgba(0, 0, 0, 0.85);
+  display: none; align-items: center; justify-content: center;
+}
+#help.on { display: flex; }
+#help .card { background: var(--panel); padding: 20px; border: 1px solid var(--edge); }
+#help h2 { font-size: 13px; font-weight: 600; padding-bottom: 8px; }
+#help td { padding: 2px 12px 2px 0; }
+#help td:first-child { white-space: nowrap; }
+</style>
+</head>
+<body>
+<header>
+  <strong>cutlist review</strong>
+  <span class="count" id="count">&mdash;</span>
+  <span class="dim truncate" id="meta"></span>
+  <span class="spacer"></span>
+  <span class="dim tc" id="clock"></span>
+</header>
+
+<div id="stage"><video id="player" preload="metadata" muted playsinline></video></div>
+
+<div id="strip"></div>
+
+<footer>
+  <span class="echo" id="echo">ready</span>
+  <span class="dim">
+    <kbd>f</kbd><kbd>o</kbd><kbd>n</kbd> verdict &middot;
+    <kbd>1</kbd>&ndash;<kbd>9</kbd> then <kbd>g</kbd><kbd>b</kbd><kbd>v</kbd> mark &middot;
+    <kbd>space</kbd> play &middot; <kbd>j</kbd><kbd>k</kbd><kbd>l</kbd> shuttle &middot;
+    <kbd>z</kbd> undo &middot; <kbd>?</kbd> help
+  </span>
+</footer>
+
+<div id="help"><div class="card">
+<h2>Keys</h2>
+<table>
+  <tr><td><kbd>space</kbd></td><td>play / pause</td></tr>
+  <tr><td><kbd>j</kbd> <kbd>k</kbd> <kbd>l</kbd></td><td>rewind / pause / forward</td></tr>
+  <tr><td><kbd>&larr;</kbd> <kbd>&rarr;</kbd></td><td>step one frame</td></tr>
+  <tr><td><kbd>1</kbd>&ndash;<kbd>9</kbd></td><td>select segment</td></tr>
+  <tr><td><kbd>g</kbd> <kbd>b</kbd> <kbd>v</kbd></td><td>good / bad / veto</td></tr>
+  <tr><td><kbd>f</kbd> <kbd>o</kbd> <kbd>n</kbd></td><td>fire / ok / no, then advance</td></tr>
+  <tr><td><kbd>z</kbd></td><td>undo the last verdict</td></tr>
+  <tr><td><kbd>?</kbd></td><td>close this</td></tr>
+</table>
+</div></div>
+
+<script>
+const player = document.getElementById("player");
+const strip = document.getElementById("strip");
+const echo = document.getElementById("echo");
+const countEl = document.getElementById("count");
+const metaEl = document.getElementById("meta");
+const clockEl = document.getElementById("clock");
+const help = document.getElementById("help");
+
+let clips = [], index = 0, detail = null, selected = 0, lastVerdict = null;
+
+const tc = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+const say = (m, bad = false) => { echo.textContent = m; echo.classList.toggle("err", bad); };
+const current = () => (index < clips.length ? clips[index] : null);
+
+async function boot() {
+  clips = await (await fetch("/api/clips")).json();
+  if (!clips.length) { say("nothing left to review"); countEl.textContent = "0 / 0"; return; }
+  await show(0);
+}
+
+async function show(i) {
+  index = i; selected = 0;
+  if (index >= clips.length) {
+    player.removeAttribute("src"); player.load();
+    strip.innerHTML = ""; detail = null;
+    countEl.textContent = `${clips.length} / ${clips.length}`;
+    metaEl.textContent = ""; clockEl.textContent = "";
+    say("batch complete"); return;
+  }
+  const clip = clips[index];
+  detail = await (await fetch(`/api/clip/${clip.id}`)).json();
+  countEl.textContent = `clip ${index + 1} / ${clips.length}`;
+  const rated = detail.verdict ? ` · rated ${detail.verdict}` : "";
+  metaEl.textContent =
+    `${detail.preset_name} · "${detail.caption_text}" · seed ${detail.seed}${rated}`;
+  player.src = `/media/clip/${clip.id}`;
+  player.play().catch(() => {});
+  draw();
+}
+
+function draw() {
+  if (!detail) { strip.innerHTML = ""; return; }
+  const total = detail.segments.reduce((a, s) => a + (s.seg_end_s - s.seg_start_s), 0);
+  strip.innerHTML = "";
+  detail.segments.forEach((s, i) => {
+    const span = s.seg_end_s - s.seg_start_s;
+    const el = document.createElement("div");
+    el.className = "seg" + (s.mark ? " " + s.mark : "") + (i === selected ? " sel" : "");
+    // flex-basis 0 with a duration-proportional grow, floored by min-width.
+    el.style.flex = `${total ? span / total : 1} 1 0`;
+    el.innerHTML =
+      `<img src="/media/thumb/${s.id}" alt="" ` +
+      // A missing source video 404s every thumbnail; a row of broken-image
+      // glyphs is worse than a row of empty panels with their timecodes.
+      `onerror="this.style.visibility='hidden'">` +
+      `<div class="meta"><span>${i + 1} ${tc(s.seg_start_s)}</span>` +
+      `<span>${span.toFixed(1)}s</span></div>`;
+    el.onclick = () => { selected = i; draw(); };
+    strip.appendChild(el);
+  });
+}
+
+player.addEventListener("timeupdate", () => {
+  if (!detail) return;
+  clockEl.textContent = `${tc(player.currentTime)} / ${tc(detail.duration_s)}`;
+});
+
+async function post(body) {
+  let r;
+  try {
+    r = await fetch("/api/ratings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    // The server is gone. Saying so beats keys that quietly stop working.
+    say("no answer from the server — the rating was not saved", true);
+    return false;
+  }
+  if (!r.ok) { say("rejected: " + (await r.json()).error, true); return false; }
+  return true;
+}
+
+async function mark(kind) {
+  const clip = current();
+  if (!clip || !detail) return;
+  const seg = detail.segments[selected];
+  if (!seg) return;
+  if (await post({ clip_id: clip.id, marks: [{ segment_id: seg.id, mark: kind }] })) {
+    seg.mark = kind; draw();
+    say(`seg ${selected + 1} → ${kind}`);
+  }
+}
+
+async function verdict(kind) {
+  const clip = current();
+  if (!clip) return;
+  if (await post({ clip_id: clip.id, verdict: kind })) {
+    lastVerdict = clip.id;
+    say(`clip ${index + 1} → ${kind} · z undo`);
+    await show(index + 1);
+  }
+}
+
+async function undo() {
+  if (lastVerdict === null) { say("nothing to undo"); return; }
+  const target = clips.findIndex((c) => c.id === lastVerdict);
+  lastVerdict = null;
+  if (target >= 0) { await show(target); say("reopened — re-rate to overwrite"); }
+}
+
+document.addEventListener("keydown", (e) => {
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  const code = e.code;
+
+  if (code === "Slash" && e.shiftKey) { help.classList.toggle("on"); e.preventDefault(); return; }
+  if (help.classList.contains("on")) { help.classList.remove("on"); return; }
+
+  if (code === "Space") { player.paused ? player.play() : player.pause(); e.preventDefault(); return; }
+  if (code === "KeyJ") { player.currentTime = Math.max(0, player.currentTime - 1); return; }
+  if (code === "KeyK") { player.pause(); return; }
+  if (code === "KeyL") { player.currentTime += 1; return; }
+  if (code === "ArrowLeft") {
+    player.currentTime = Math.max(0, player.currentTime - 0.04); e.preventDefault(); return;
+  }
+  if (code === "ArrowRight") { player.currentTime += 0.04; e.preventDefault(); return; }
+
+  if (/^Digit[1-9]$/.test(code)) {
+    const n = Number(code.slice(5)) - 1;
+    if (detail && n < detail.segments.length) { selected = n; draw(); say(`seg ${n + 1}`); }
+    return;
+  }
+
+  if (code === "KeyG") return void mark("good");
+  if (code === "KeyB") return void mark("bad");
+  if (code === "KeyV") return void mark("veto");
+  if (code === "KeyF") return void verdict("fire");
+  if (code === "KeyO") return void verdict("ok");
+  if (code === "KeyN") return void verdict("no");
+  if (code === "KeyZ") return void undo();
+});
+
+boot();
+</script>
+</body>
 </html>

@@ -304,3 +304,42 @@ def ratings(
     typer.echo("segments: " + ", ".join(
         f"{k} {marks.get(k, 0)}" for k in store.MARKS
     ))
+
+
+@app.command()
+@handle_errors
+def review(
+    film: str | None = typer.Option(None, "--film", help="Filter by film hash."),
+    preset: str | None = typer.Option(None, "--preset", help="Filter by preset name."),
+    port: int = typer.Option(8731, "--port", help="Port to serve on."),
+    all_clips: bool = typer.Option(False, "--all", help="Include clips already rated."),
+    open_browser: bool = typer.Option(True, "--open/--no-open", help="Open a browser."),
+    root: Path = typer.Option(Path("."), "--root", help="Workspace root."),
+) -> None:
+    """Serve the local review page."""
+    import webbrowser
+
+    from cutlist.review.server import build_server
+
+    try:
+        httpd = build_server(
+            root=root, port=port, film=film, preset=preset,
+            unrated_only=not all_clips,
+        )
+    except OSError as exc:
+        # Refuse rather than silently picking another port: a review URL you
+        # did not ask for is worse than a clear failure.
+        typer.echo(f"error: cannot bind port {port}: {exc}", err=True)
+        raise typer.Exit(code=1) from None
+
+    url = f"http://127.0.0.1:{httpd.server_address[1]}"
+    typer.echo(f"review at {url}  (ctrl-c to stop)")
+    if open_browser:
+        webbrowser.open(url)
+
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        typer.echo("\nstopped")
+    finally:
+        httpd.server_close()

@@ -28,6 +28,9 @@ command. Run the tests with:
 cutlist probe <video>
 cutlist shots <video> [--json]
 cutlist draft <video> --preset <preset.yaml> [--count N] [--caption "..."] [--root DIR] [--seed N]
+cutlist review [--film HASH] [--preset NAME] [--port N] [--all]
+cutlist rate <clip-path> <fire|ok|no> [--segments "1:good,3:veto"]
+cutlist ratings [--json]
 ```
 
 `probe` reports what ffprobe makes of the file: dimensions, fps, duration,
@@ -82,6 +85,21 @@ time with an explanation of what totals are achievable.
 
 To add a preset, copy `real_saturday.yaml`, change the caption and rhythm
 numbers, and pass its path to `--preset`. No code changes needed.
+
+## Rating
+
+`draft` records what each clip was made of into `cutlist.sqlite` at the
+workspace root: the run's seed and resolved preset, every clip, and every
+segment with both its own timecodes and those of the shot it came from.
+
+`cutlist review` serves a local page for watching a batch and rating it --
+`f`/`o`/`n` for the clip verdict, `1`-`9` then `g`/`b`/`v` to mark individual
+segments, `z` to undo, `?` for the full list. It opens a browser unless you
+pass `--no-open`, and refuses a port that is already taken. `cutlist rate`
+does the same from the terminal.
+
+Nothing consumes the ratings yet. This release collects them; scoring uses
+them later.
 
 ## Current state
 
