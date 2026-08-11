@@ -24,5 +24,11 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 include = ["cutlist*"]
 
+# page.html is the review UI, and the first runtime asset here that is not a
+# .py file. Without this a wheel ships the code and not the page, so a
+# non-editable install serves GET / into a FileNotFoundError.
+[tool.setuptools.package-data]
+"cutlist.review" = ["page.html"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
