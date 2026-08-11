@@ -5,6 +5,7 @@ from typer.testing import CliRunner
 
 import cutlist.cli as cli
 from cutlist.cli import app
+from cutlist.db import store
 from cutlist.db.schema import connect
 from cutlist.shell import ToolError
 
@@ -87,6 +88,49 @@ def test_draft_records_a_clip_row_per_rendered_file(
     assert [c["ordinal"] for c in clips] == [1, 2]
     for clip in clips:
         assert (tmp_path / clip["path"]).exists()
+
+
+def test_two_drafts_of_the_same_film_and_preset_do_not_share_files(
+    fixture_film, preset_file, tmp_path
+):
+    # Clips are named by ordinal, so before runs got their own output
+    # directory the second draft overwrote the first's files while the first
+    # run's clip rows kept claiming those paths.
+    assert _draft(fixture_film, preset_file, tmp_path).exit_code == 0
+    assert _draft(fixture_film, preset_file, tmp_path).exit_code == 0
+
+    conn = connect(tmp_path / "cutlist.sqlite")
+    rows = conn.execute("SELECT run_id, path FROM clip").fetchall()
+    assert len({row["run_id"] for row in rows}) == 2
+
+    paths = [row["path"] for row in rows]
+    assert len(paths) == 4
+    assert len(set(paths)) == 4
+    for path in paths:
+        assert (tmp_path / path).is_file()
+
+
+def test_after_two_drafts_each_path_resolves_to_its_own_run(
+    fixture_film, preset_file, tmp_path
+):
+    # The aliasing this guards against: clip_by_path used to hand back
+    # whichever run recorded the path first, so a verdict typed against the
+    # bytes on disk landed on a different run's segments.
+    assert _draft(fixture_film, preset_file, tmp_path).exit_code == 0
+    assert _draft(fixture_film, preset_file, tmp_path).exit_code == 0
+
+    conn = connect(tmp_path / "cutlist.sqlite")
+    for expected in conn.execute("SELECT * FROM clip").fetchall():
+        found = store.clip_by_path(conn, expected["path"])
+        assert found["id"] == expected["id"]
+        assert found["run_id"] == expected["run_id"]
+
+        # ...and the segments reached through that path are this clip's own.
+        segments = conn.execute(
+            "SELECT clip_id FROM segment WHERE clip_id = ?", (found["id"],)
+        ).fetchall()
+        assert segments
+        assert {row["clip_id"] for row in segments} == {expected["id"]}
 
 
 def test_every_recorded_segment_lies_inside_its_shot(

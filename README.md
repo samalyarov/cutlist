@@ -40,7 +40,10 @@ whether it has audio.
 
 `draft` is the one that produces output. It detects shots, picks segments
 according to the preset's rhythm rules, and renders `--count` clips (10 by
-default) to `output/<video>/<preset>/`. Example:
+default) to `output/<video>/<preset>/<run-id>/`. Each draft gets its own
+run directory, so re-drafting the same video and preset never overwrites an
+earlier run's clips -- the ratings recorded against them stay attached to
+the footage they were made about. Example:
 
 ```
 cutlist draft "input/my-video.mp4" \

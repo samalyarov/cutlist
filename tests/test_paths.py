@@ -54,9 +54,20 @@ def test_workspace_paths_are_created_on_demand(tmp_path, fixture_film):
     assert film_id(fixture_film) in cache.name
 
 
-def test_output_dir_groups_by_film_then_preset(tmp_path, fixture_film):
+def test_output_dir_groups_by_film_then_preset_then_run(tmp_path, fixture_film):
     ws = Workspace(root=tmp_path)
-    out = ws.output_for(fixture_film, "real_saturday")
+    out = ws.output_for(fixture_film, "real_saturday", 7)
     assert out.is_dir()
-    assert out.name == "real_saturday"
-    assert out.parent.name == fixture_film.stem
+    assert out.name == "7"
+    assert out.parent.name == "real_saturday"
+    assert out.parent.parent.name == fixture_film.stem
+
+
+def test_output_dirs_of_two_runs_are_distinct(tmp_path, fixture_film):
+    # Clips are named by ordinal, so a shared directory would mean run 2
+    # silently overwriting run 1's files.
+    ws = Workspace(root=tmp_path)
+    first = ws.output_for(fixture_film, "real_saturday", 1)
+    second = ws.output_for(fixture_film, "real_saturday", 2)
+    assert first != second
+    assert first.parent == second.parent

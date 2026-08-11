@@ -143,7 +143,6 @@ def draft(
         spec = spec.with_caption(caption)
 
     workspace = Workspace(root=root)
-    destination = workspace.output_for(film, spec.name)
 
     typer.echo(f"caption: {spec.caption.text}")
     typer.echo("detecting shots...")
@@ -183,6 +182,10 @@ def draft(
         cutlist_version=_cutlist_version(),
         film_hashes=[film_hash],
     )
+
+    # Derived from run_id, so this run cannot write over an earlier one's
+    # clips -- hence computed here rather than before the store calls.
+    destination = workspace.output_for(film, spec.name, run_id)
 
     # Scoped by a random token rather than just the clip index, and rooted
     # in the cache dir rather than the (shared, user-facing) output dir --
