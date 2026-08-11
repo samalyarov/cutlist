@@ -124,6 +124,117 @@ def _preset_fingerprint(path: Path, spec) -> tuple[str, str]:
     return digest, json.dumps(asdict(spec), sort_keys=True)
 
 
+def _open_run(
+    conn, *, video: Path, spec, preset_path: Path, seed: int
+) -> tuple[str, int]:
+    """Record the source and open a run, before anything is rendered.
+
+    Opened first so a run that dies partway still records which source it was
+    pointed at and which preset it was going to use.
+    """
+    info = probe_film(video)
+    film_hash = film_id(video)
+    store.record_film(
+        conn,
+        film_hash=film_hash,
+        display_name=video.name,
+        duration_s=info.duration,
+        fps=info.fps,
+        width=info.width,
+        height=info.height,
+    )
+    preset_sha256, preset_json = _preset_fingerprint(preset_path, spec)
+    run_id = store.start_run(
+        conn,
+        preset_name=spec.name,
+        preset_sha256=preset_sha256,
+        preset_json=preset_json,
+        caption_text=spec.caption.text,
+        seed=seed,
+        cutlist_version=_cutlist_version(),
+        film_hashes=[film_hash],
+    )
+    return film_hash, run_id
+
+
+def _record_picks(
+    conn, *, run_id: int, ordinal: int, clip: Path, root: Path, picks, film_hash: str
+) -> None:
+    """Record one rendered clip and the segments it was assembled from."""
+    store.record_clip(
+        conn,
+        run_id=run_id,
+        ordinal=ordinal,
+        path=clip.relative_to(root).as_posix(),
+        duration_s=sum(pick.segment.duration for pick in picks),
+        segments=[
+            store.SegmentRecord(
+                film_hash=film_hash,
+                seg_start_s=pick.segment.start,
+                seg_end_s=pick.segment.end,
+                shot_start_s=pick.shot.start,
+                shot_end_s=pick.shot.end,
+                shot_index=pick.shot.index,
+            )
+            for pick in picks
+        ],
+    )
+
+
+def _draft_clips(
+    conn, *, video: Path, spec, workspace: Workspace,
+    count: int, seed: int, preset_path: Path,
+) -> Path:
+    """Detect shots, render `count` clips, and record what each was made of.
+
+    Returns the directory the clips were written to.
+    """
+    typer.echo(f"caption: {spec.caption.text}")
+    typer.echo("detecting shots...")
+    found = detect_shots(video)
+    typer.echo(f"{len(found)} shots")
+
+    rng = random.Random(seed)
+    film_hash, run_id = _open_run(
+        conn, video=video, spec=spec, preset_path=preset_path, seed=seed
+    )
+
+    # Derived from run_id, so this run cannot write over an earlier one's clips.
+    destination = workspace.output_for(video, spec.name, run_id)
+    # Rooted in the cache dir and scoped by a random token: two concurrent
+    # drafts of the same video and preset must not share a scratch path.
+    scratch_root = workspace.cache_for(video) / f"scratch_{uuid.uuid4().hex[:8]}"
+    caption_png = render_caption(spec.caption, spec.output, scratch_root / "caption.png")
+
+    written = 0
+    for ordinal in range(1, count + 1):
+        try:
+            picks = draft_picks(found, spec.rhythm, rng)
+            segments = [pick.segment for pick in picks]
+            clip = destination / f"{ordinal:02d}.mp4"
+            render_clip(
+                video, segments, caption_png, spec.output, clip,
+                scratch_root / f"{ordinal:02d}",
+            )
+        except (NotEnoughFootage, ToolError) as exc:
+            typer.echo(
+                f"wrote {written} of {count} clips; failed on {ordinal:02d}: {exc}",
+                err=True,
+            )
+            raise typer.Exit(code=1) from None
+
+        _record_picks(
+            conn, run_id=run_id, ordinal=ordinal, clip=clip,
+            root=workspace.root, picks=picks, film_hash=film_hash,
+        )
+        length = sum(segment.duration for segment in segments)
+        typer.echo(f"{clip.name}  {len(segments)} segments  {length:.1f}s")
+        written += 1
+
+    typer.echo(f"\nwrote {written} clips to {destination}  (seed {seed})")
+    return destination
+
+
 @app.command()
 @handle_errors
 def draft(
@@ -142,103 +253,18 @@ def draft(
     if caption:
         spec = spec.with_caption(caption)
 
-    workspace = Workspace(root=root)
-
-    typer.echo(f"caption: {spec.caption.text}")
-    typer.echo("detecting shots...")
-    found = detect_shots(film)
-    typer.echo(f"{len(found)} shots")
-
     # A run with no recorded seed cannot be reproduced, and an unreproducible
-    # run cannot have its provenance rebuilt if anything downstream is lost.
-    # Generate one rather than leaving it to chance.
+    # run cannot have its provenance rebuilt. Generate one rather than leaving
+    # it to chance.
     if seed is None:
         seed = random.randrange(2**31)
-    rng = random.Random(seed)
 
-    info = probe_film(film)
-    film_hash = film_id(film)
-    conn = connect(workspace.database)
-    store.record_film(
-        conn,
-        film_hash=film_hash,
-        display_name=film.name,
-        duration_s=info.duration,
-        fps=info.fps,
-        width=info.width,
-        height=info.height,
+    workspace = Workspace(root=root)
+    _draft_clips(
+        connect(workspace.database),
+        video=film, spec=spec, workspace=workspace,
+        count=count, seed=seed, preset_path=preset,
     )
-
-    preset_sha256, preset_json = _preset_fingerprint(preset, spec)
-    # Opened before the first render, so a run that dies partway still
-    # records which source it was pointed at.
-    run_id = store.start_run(
-        conn,
-        preset_name=spec.name,
-        preset_sha256=preset_sha256,
-        preset_json=preset_json,
-        caption_text=spec.caption.text,
-        seed=seed,
-        cutlist_version=_cutlist_version(),
-        film_hashes=[film_hash],
-    )
-
-    # Derived from run_id, so this run cannot write over an earlier one's
-    # clips -- hence computed here rather than before the store calls.
-    destination = workspace.output_for(film, spec.name, run_id)
-
-    # Scoped by a random token rather than just the clip index, and rooted
-    # in the cache dir rather than the (shared, user-facing) output dir --
-    # two concurrent drafts of the same film+preset used to both reach for
-    # `.scratch_01` and race on each other's segment writes and rmtree.
-    scratch_root = workspace.cache_for(film) / f"scratch_{uuid.uuid4().hex[:8]}"
-
-    # Same collision the scratch dir above was fixed for: caption.png used to
-    # be keyed on the film alone, so two concurrent drafts of the same film
-    # with different captions or presets would overwrite each other's PNG
-    # mid-run and burn the wrong text into the other run's clips. Scoping it
-    # under this run's own scratch_root removes the shared path entirely.
-    caption_png = render_caption(spec.caption, spec.output, scratch_root / "caption.png")
-
-    written = 0
-    for n in range(1, count + 1):
-        try:
-            picks = draft_picks(found, spec.rhythm, rng)
-            segments = [pick.segment for pick in picks]
-            clip = destination / f"{n:02d}.mp4"
-            render_clip(
-                film, segments, caption_png, spec.output, clip, scratch_root / f"{n:02d}"
-            )
-        except (NotEnoughFootage, ToolError) as exc:
-            typer.echo(
-                f"wrote {written} of {count} clips; failed on {n:02d}: {exc}", err=True
-            )
-            raise typer.Exit(code=1) from None
-
-        length = sum(s.duration for s in segments)
-        store.record_clip(
-            conn,
-            run_id=run_id,
-            ordinal=n,
-            path=clip.relative_to(root).as_posix(),
-            duration_s=length,
-            segments=[
-                store.SegmentRecord(
-                    film_hash=film_hash,
-                    seg_start_s=pick.segment.start,
-                    seg_end_s=pick.segment.end,
-                    shot_start_s=pick.shot.start,
-                    shot_end_s=pick.shot.end,
-                    shot_index=pick.shot.index,
-                )
-                for pick in picks
-            ],
-        )
-
-        typer.echo(f"{clip.name}  {len(segments)} segments  {length:.1f}s")
-        written += 1
-
-    typer.echo(f"\nwrote {written} clips to {destination}  (seed {seed})")
 
 
 @app.command()

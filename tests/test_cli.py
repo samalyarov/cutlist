@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 from typer.testing import CliRunner
 
@@ -62,6 +63,27 @@ def test_draft_writes_playable_clips(fixture_film, tmp_path):
         assert info.has_audio is False
         assert (info.width, info.height) == (854, 480)
         assert 9.0 <= info.duration <= 15.5
+
+
+def test_draft_clips_returns_the_run_scoped_output_directory(tmp_path, fixture_film):
+    from cutlist.cli import _draft_clips
+    from cutlist.db.schema import connect
+    from cutlist.paths import Workspace
+    from cutlist.presets import load_preset
+
+    preset_path = Path("presets/real_saturday.yaml")
+    spec = load_preset(preset_path)
+    workspace = Workspace(root=tmp_path)
+    conn = connect(workspace.database)
+
+    destination = _draft_clips(
+        conn, video=fixture_film, spec=spec, workspace=workspace,
+        count=1, seed=7, preset_path=preset_path,
+    )
+
+    run_id = conn.execute("SELECT id FROM run").fetchone()[0]
+    assert destination == workspace.output / fixture_film.stem / spec.name / str(run_id)
+    assert (destination / "01.mp4").exists()
 
 
 def test_draft_caption_override_is_accepted(fixture_film, tmp_path):
