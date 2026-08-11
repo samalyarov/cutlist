@@ -68,3 +68,8 @@ desktop.ini
 # LLM
 .claude/
 .superpowers/
+
+# Specs and implementation plans. Development artifacts kept locally rather
+# than published. Earlier commits still contain them; this stops new ones
+# being tracked, and deliberately does not rewrite that history.
+docs/
