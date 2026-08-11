@@ -1,3 +1,4 @@
+import http.client
 import json
 import threading
 import urllib.error
@@ -156,6 +157,65 @@ def test_a_partially_invalid_mark_list_writes_nothing(server, workspace):
 
     conn = connect(workspace / "cutlist.sqlite")
     assert conn.execute("SELECT COUNT(*) FROM shot_rating").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM clip_rating").fetchone()[0] == 0
+
+
+def test_a_boolean_clip_id_is_rejected(server, workspace):
+    """`isinstance(True, int)` is True in Python.
+
+    Without an explicit bool check, {"clip_id": true} validates and rates
+    clip 1 -- which in this workspace is a real clip the caller never named.
+    """
+    clips = json.loads(_get(f"{server}/api/clips")[1])
+    assert clips[0]["id"] == 1, "the bool would have to alias a real clip to matter"
+
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        _post(f"{server}/api/ratings", {"clip_id": True, "verdict": "fire"})
+    assert exc.value.code == 400
+
+    conn = connect(workspace / "cutlist.sqlite")
+    assert conn.execute("SELECT COUNT(*) FROM clip_rating").fetchone()[0] == 0
+
+
+def test_a_bug_inside_store_is_not_reported_as_a_bad_request(
+    server, workspace, monkeypatch
+):
+    """A plain ValueError out of store is a bug, not a malformed request.
+
+    The writes used to be wrapped in a bare (ValueError, LookupError), which
+    turned any internal invariant failure into a confident 400 blaming the
+    caller's input. Only the store's own rating errors mean "bad request".
+    """
+    def boom(*args, **kwargs):
+        raise ValueError("internal invariant broke")
+
+    monkeypatch.setattr(store, "rate_clip", boom)
+    clips = json.loads(_get(f"{server}/api/clips")[1])
+
+    with pytest.raises((urllib.error.URLError, http.client.HTTPException)) as exc:
+        _post(f"{server}/api/ratings", {"clip_id": clips[0]["id"], "verdict": "fire"})
+    assert not (isinstance(exc.value, urllib.error.HTTPError) and exc.value.code == 400)
+
+    conn = connect(workspace / "cutlist.sqlite")
+    assert conn.execute("SELECT COUNT(*) FROM clip_rating").fetchone()[0] == 0
+
+
+def test_a_store_rating_error_during_the_write_is_still_a_bad_request(
+    server, workspace, monkeypatch
+):
+    # The other half of the narrowed except: what the store raises on purpose
+    # still reaches the caller as a 400 rather than a dropped connection.
+    def refuse(*args, **kwargs):
+        raise store.RatingError("verdict must be one of fire, ok, no")
+
+    monkeypatch.setattr(store, "rate_clip", refuse)
+    clips = json.loads(_get(f"{server}/api/clips")[1])
+
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        _post(f"{server}/api/ratings", {"clip_id": clips[0]["id"], "verdict": "fire"})
+    assert exc.value.code == 400
+
+    conn = connect(workspace / "cutlist.sqlite")
     assert conn.execute("SELECT COUNT(*) FROM clip_rating").fetchone()[0] == 0
 
 

@@ -228,7 +228,13 @@ class ReviewHandler(BaseHTTPRequestHandler):
         # Everything is validated before anything is written, so a bad mark
         # never leaves a verdict recorded without it, and no earlier mark in
         # the same list is left committed while a later one fails.
-        if not isinstance(clip_id, int) or store.clip_detail(conn, clip_id) is None:
+        # `isinstance(True, int)` is True, so a bare check would let
+        # {"clip_id": true} through and rate clip 1.
+        if (
+            isinstance(clip_id, bool)
+            or not isinstance(clip_id, int)
+            or store.clip_detail(conn, clip_id) is None
+        ):
             self._send_error(400, "clip_id must name a recorded clip")
             return
         if verdict is not None and verdict not in store.VERDICTS:
@@ -253,7 +259,11 @@ class ReviewHandler(BaseHTTPRequestHandler):
                 )
             if verdict is not None:
                 store.rate_clip(conn, clip_id=clip_id, verdict=verdict)
-        except (ValueError, LookupError) as exc:
+        # The store's own rating errors only. Catching bare ValueError /
+        # LookupError here would dress a genuine bug inside store up as a
+        # confident 400, which is the wide behaviour the CLI boundary was
+        # deliberately narrowed away from.
+        except (store.RatingError, store.RatingNotFound) as exc:
             self._send_error(400, str(exc))
             return
 
