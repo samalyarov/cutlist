@@ -4,7 +4,43 @@ import pytest
 
 from cutlist.media.shots import Shot
 from cutlist.presets import RhythmSpec
-from cutlist.select.naive import NotEnoughFootage, Pick, draft_picks
+from cutlist.select.naive import NotEnoughFootage, Pick, draft_picks, _grow_toward, _shrink_toward
+
+
+def test_shrink_toward_moves_each_duration_down_in_proportion_to_its_slack():
+    # Two segments, 4.0s of slack each above a 1.0 floor. Asking for a total of
+    # 6.0 from 10.0 means giving up 4.0 of the 8.0 available -- half each slack.
+    result = _shrink_toward([5.0, 5.0], target=6.0, floor=1.0)
+    assert result == pytest.approx([3.0, 3.0])
+
+
+def test_shrink_toward_never_pushes_a_duration_below_the_floor():
+    # 1.5 has only 0.5 of slack above the floor; 6.0 has 5.0. Demanding more
+    # than the total slack clamps every element at its floor rather than
+    # producing a sub-floor duration.
+    result = _shrink_toward([1.5, 6.0], target=0.0, floor=1.0)
+    assert result == pytest.approx([1.0, 1.0])
+
+
+def test_shrink_toward_returns_input_untouched_when_there_is_no_slack():
+    assert _shrink_toward([1.0, 1.0], target=0.5, floor=1.0) == [1.0, 1.0]
+
+
+def test_grow_toward_respects_a_per_element_ceiling():
+    # The second element can only reach 2.0, so it contributes 1.0 of the
+    # 5.0 total slack while the first contributes 4.0.
+    result = _grow_toward([1.0, 1.0], target=4.0, ceilings=[5.0, 2.0])
+    assert result == pytest.approx([2.6, 1.4])
+
+
+def test_grow_toward_stops_at_the_ceilings_when_the_target_is_out_of_reach():
+    result = _grow_toward([1.0, 1.0], target=99.0, ceilings=[2.0, 3.0])
+    assert result == pytest.approx([2.0, 3.0])
+
+
+def test_grow_toward_returns_input_untouched_when_every_element_is_capped():
+    assert _grow_toward([2.0, 3.0], target=99.0, ceilings=[2.0, 3.0]) == [2.0, 3.0]
+
 
 RHYTHM = RhythmSpec(
     min_segments=4, max_segments=10,
