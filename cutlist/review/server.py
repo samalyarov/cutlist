@@ -18,6 +18,17 @@ _RANGE = re.compile(r"^bytes=(\d*)-(\d*)$")
 _CHUNK = 64 * 1024
 
 
+def _is_id(value) -> bool:
+    """Is this a usable row id from a JSON body?
+
+    `isinstance(True, int)` is True in Python, so a bare int check accepts
+    booleans: {"clip_id": true} would validate and rate clip 1, and
+    {"segment_id": true} would mark segment 1 -- rows the caller never named.
+    Shared by both checks so the two cannot drift apart again.
+    """
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
 class ReviewHandler(BaseHTTPRequestHandler):
     """Serves the review page and the JSON it talks to.
 
@@ -228,13 +239,7 @@ class ReviewHandler(BaseHTTPRequestHandler):
         # Everything is validated before anything is written, so a bad mark
         # never leaves a verdict recorded without it, and no earlier mark in
         # the same list is left committed while a later one fails.
-        # `isinstance(True, int)` is True, so a bare check would let
-        # {"clip_id": true} through and rate clip 1.
-        if (
-            isinstance(clip_id, bool)
-            or not isinstance(clip_id, int)
-            or store.clip_detail(conn, clip_id) is None
-        ):
+        if not _is_id(clip_id) or store.clip_detail(conn, clip_id) is None:
             self._send_error(400, "clip_id must name a recorded clip")
             return
         if verdict is not None and verdict not in store.VERDICTS:
@@ -245,7 +250,7 @@ class ReviewHandler(BaseHTTPRequestHandler):
                 self._send_error(400, f"mark must be one of {', '.join(store.MARKS)}")
                 return
             segment_id = entry.get("segment_id")
-            if not isinstance(segment_id, int):
+            if not _is_id(segment_id):
                 self._send_error(400, "each mark needs an integer segment_id")
                 return
             if store.segment_by_id(conn, segment_id) is None:

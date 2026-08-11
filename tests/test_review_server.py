@@ -177,6 +177,29 @@ def test_a_boolean_clip_id_is_rejected(server, workspace):
     assert conn.execute("SELECT COUNT(*) FROM clip_rating").fetchone()[0] == 0
 
 
+def test_a_boolean_segment_id_is_rejected(server, workspace):
+    """The same hole as the clip_id one, in the marks loop.
+
+    `isinstance(True, int)` is True, so an unguarded check would accept
+    {"segment_id": true} and mark segment 1 -- real footage the caller never
+    named. Both checks go through _is_id so they cannot drift apart.
+    """
+    clips = json.loads(_get(f"{server}/api/clips")[1])
+    detail = json.loads(_get(f"{server}/api/clip/{clips[0]['id']}")[1])
+    assert detail["segments"][0]["id"] == 1, "the bool has to alias a real segment"
+
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        _post(f"{server}/api/ratings", {
+            "clip_id": clips[0]["id"],
+            "marks": [{"segment_id": True, "mark": "veto"}],
+        })
+    assert exc.value.code == 400
+
+    conn = connect(workspace / "cutlist.sqlite")
+    assert conn.execute("SELECT COUNT(*) FROM shot_rating").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM clip_rating").fetchone()[0] == 0
+
+
 def test_a_bug_inside_store_is_not_reported_as_a_bad_request(
     server, workspace, monkeypatch
 ):
