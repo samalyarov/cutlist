@@ -10,7 +10,7 @@ runner = CliRunner()
 PAGE = Path("cutlist/review/page.html").read_text(encoding="utf-8")
 
 FORBIDDEN = [
-    "Inter", "#6366f1", "#8b5cf6", "radial-gradient", "backdrop-filter",
+    "#6366f1", "#8b5cf6", "radial-gradient", "backdrop-filter",
     "cdn.", "googleapis", "unpkg", "jsdelivr",
 ]
 
@@ -18,6 +18,16 @@ FORBIDDEN = [
 @pytest.mark.parametrize("marker", FORBIDDEN)
 def test_page_avoids_generated_default_markers(marker):
     assert marker.lower() not in PAGE.lower()
+
+
+def test_page_does_not_use_the_inter_typeface():
+    """Word boundary, deliberately -- do not fold this into FORBIDDEN.
+
+    A substring check for "Inter" also matches `cursor: pointer`, which cost
+    the page a real click affordance once already. `\\b` will not match inside
+    "pointer" because `o` and `i` are both word characters.
+    """
+    assert not re.search(r"\bInter\b", PAGE, re.IGNORECASE)
 
 
 def test_the_only_gradient_is_the_veto_hatch():
