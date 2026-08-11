@@ -48,6 +48,11 @@ references/
 
 # Generated analysis artifacts
 *.sqlite
+# WAL sidecars: present for as long as any connection is open, which is the
+# whole time `cutlist review` runs -- exactly when someone reaches for
+# `git add -A`. They hold rating data not yet folded into the .sqlite file.
+*.sqlite-wal
+*.sqlite-shm
 *.sqlite3
 *.db
 *.npy

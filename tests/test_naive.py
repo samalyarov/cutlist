@@ -4,7 +4,7 @@ import pytest
 
 from cutlist.media.shots import Shot
 from cutlist.presets import RhythmSpec
-from cutlist.select.naive import NotEnoughFootage, draft_segments
+from cutlist.select.naive import NotEnoughFootage, Pick, draft_picks
 
 RHYTHM = RhythmSpec(
     min_segments=4, max_segments=10,
@@ -19,7 +19,8 @@ def make_shots(count, length=6.0):
 
 @pytest.mark.parametrize("seed", range(25))
 def test_respects_every_duration_rule(seed):
-    segments = draft_segments(make_shots(40), RHYTHM, random.Random(seed))
+    picks = draft_picks(make_shots(40), RHYTHM, random.Random(seed))
+    segments = [p.segment for p in picks]
 
     assert RHYTHM.min_segments <= len(segments) <= RHYTHM.max_segments
     for segment in segments:
@@ -31,7 +32,8 @@ def test_respects_every_duration_rule(seed):
 @pytest.mark.parametrize("seed", range(25))
 def test_every_segment_sits_inside_a_real_shot(seed):
     shots = make_shots(40)
-    segments = draft_segments(shots, RHYTHM, random.Random(seed))
+    picks = draft_picks(shots, RHYTHM, random.Random(seed))
+    segments = [p.segment for p in picks]
 
     for segment in segments:
         assert any(
@@ -41,13 +43,15 @@ def test_every_segment_sits_inside_a_real_shot(seed):
 
 @pytest.mark.parametrize("seed", range(10))
 def test_segments_are_ordered_by_timecode(seed):
-    segments = draft_segments(make_shots(40), RHYTHM, random.Random(seed))
+    picks = draft_picks(make_shots(40), RHYTHM, random.Random(seed))
+    segments = [p.segment for p in picks]
     assert [s.start for s in segments] == sorted(s.start for s in segments)
 
 
 def test_never_reuses_a_shot():
     shots = make_shots(40)
-    segments = draft_segments(shots, RHYTHM, random.Random(0))
+    picks = draft_picks(shots, RHYTHM, random.Random(0))
+    segments = [p.segment for p in picks]
     owners = [
         next(s.index for s in shots if s.start <= seg.start and seg.end <= s.end)
         for seg in segments
@@ -57,8 +61,8 @@ def test_never_reuses_a_shot():
 
 def test_different_seeds_give_different_drafts():
     shots = make_shots(40)
-    first = draft_segments(shots, RHYTHM, random.Random(1))
-    second = draft_segments(shots, RHYTHM, random.Random(2))
+    first = [p.segment for p in draft_picks(shots, RHYTHM, random.Random(1))]
+    second = [p.segment for p in draft_picks(shots, RHYTHM, random.Random(2))]
     assert [s.start for s in first] != [s.start for s in second]
 
 
@@ -66,14 +70,15 @@ def test_ignores_shots_shorter_than_the_minimum():
     shots = [Shot(0, 0.0, 0.3), Shot(1, 0.3, 0.6)] + [
         Shot(i, i * 6.0, (i + 1) * 6.0) for i in range(2, 30)
     ]
-    segments = draft_segments(shots, RHYTHM, random.Random(0))
+    picks = draft_picks(shots, RHYTHM, random.Random(0))
+    segments = [p.segment for p in picks]
     for segment in segments:
         assert segment.start >= 12.0
 
 
 def test_raises_when_there_is_not_enough_footage():
     with pytest.raises(NotEnoughFootage):
-        draft_segments(make_shots(2), RHYTHM, random.Random(0))
+        draft_picks(make_shots(2), RHYTHM, random.Random(0))
 
 
 # min_seconds == target_seconds == max_seconds pins every usable shot's
@@ -91,10 +96,11 @@ ZERO_SLACK_RHYTHM = RhythmSpec(
 @pytest.mark.parametrize("seed", range(200))
 def test_zero_slack_shots_still_reach_the_total(seed):
     # Every shot is exactly 2.0s -- the reviewer's case that raised
-    # NotEnoughFootage on 116/200 seeds before draft_segments retried a
+    # NotEnoughFootage on 116/200 seeds before draft_picks retried a
     # fresh count instead of giving up on the first unlucky draw.
     shots = [Shot(i, i * 2.0, (i + 1) * 2.0) for i in range(20)]
-    segments = draft_segments(shots, ZERO_SLACK_RHYTHM, random.Random(seed))
+    picks = draft_picks(shots, ZERO_SLACK_RHYTHM, random.Random(seed))
+    segments = [p.segment for p in picks]
 
     total = sum(s.duration for s in segments)
     assert ZERO_SLACK_RHYTHM.min_total - 1e-6 <= total <= ZERO_SLACK_RHYTHM.max_total + 1e-6
@@ -122,7 +128,8 @@ def make_uneven_shots():
 @pytest.mark.parametrize("seed", range(30))
 def test_respects_bounds_with_an_uneven_shot_distribution(seed):
     shots = make_uneven_shots()
-    segments = draft_segments(shots, RHYTHM, random.Random(seed))
+    picks = draft_picks(shots, RHYTHM, random.Random(seed))
+    segments = [p.segment for p in picks]
 
     assert RHYTHM.min_segments <= len(segments) <= RHYTHM.max_segments
     for segment in segments:
@@ -154,4 +161,30 @@ def test_raises_when_no_draw_can_reach_the_total():
         min_total=9.0, max_total=15.0,
     )
     with pytest.raises(NotEnoughFootage):
-        draft_segments(shots, tight_rhythm, random.Random(0))
+        draft_picks(shots, tight_rhythm, random.Random(0))
+
+
+def test_draft_picks_pairs_every_segment_with_its_shot():
+    shots = [Shot(index=i, start=i * 5.0, end=i * 5.0 + 5.0) for i in range(8)]
+    picks = draft_picks(shots, RHYTHM, random.Random(1))
+
+    assert picks
+    assert all(isinstance(p, Pick) for p in picks)
+    for pick in picks:
+        assert pick.shot.start <= pick.segment.start
+        assert pick.segment.end <= pick.shot.end
+
+
+def test_draft_picks_keeps_shots_in_timecode_order():
+    shots = [Shot(index=i, start=i * 5.0, end=i * 5.0 + 5.0) for i in range(8)]
+    picks = draft_picks(shots, RHYTHM, random.Random(2))
+    starts = [p.shot.start for p in picks]
+    assert starts == sorted(starts)
+
+
+def test_draft_picks_is_reproducible_for_a_seed():
+    shots = [Shot(index=i, start=i * 5.0, end=i * 5.0 + 5.0) for i in range(8)]
+    first = draft_picks(shots, RHYTHM, random.Random(42))
+    second = draft_picks(shots, RHYTHM, random.Random(42))
+    assert [(p.shot.index, p.segment.start) for p in first] == \
+           [(p.shot.index, p.segment.start) for p in second]

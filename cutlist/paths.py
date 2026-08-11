@@ -57,7 +57,26 @@ class Workspace:
         path.mkdir(parents=True, exist_ok=True)
         return path
 
-    def output_for(self, film: Path, preset_name: str) -> Path:
-        path = self.output / film.stem / preset_name
+    def output_for(self, film: Path, preset_name: str, run_id: int) -> Path:
+        """Where one run's clips are written.
+
+        Scoped by run_id, not just film+preset: clips are named by ordinal
+        (`01.mp4`, `02.mp4`, ...), so drafting the same film and preset twice
+        used to overwrite the first run's files while its `clip` rows kept
+        claiming those paths. A rating then attached to footage that was no
+        longer in the file. One directory per run makes a clip path name
+        exactly one assembly.
+        """
+        path = self.output / film.stem / preset_name / str(run_id)
         path.mkdir(parents=True, exist_ok=True)
         return path
+
+    @property
+    def database(self) -> Path:
+        """The ratings store.
+
+        Deliberately at the workspace root rather than under cache/: taste
+        generalises across films, and the cache is regenerable. Deleting it
+        must not destroy a month of judgements.
+        """
+        return self.root / "cutlist.sqlite"

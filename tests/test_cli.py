@@ -51,7 +51,11 @@ def test_draft_writes_playable_clips(fixture_film, tmp_path):
     ])
     assert result.exit_code == 0, result.stdout
 
-    clips = sorted((tmp_path / "output" / fixture_film.stem / "real_saturday").glob("*.mp4"))
+    # "1" is the run id: a fresh workspace means this draft opens run 1, and
+    # each run gets its own output directory.
+    clips = sorted(
+        (tmp_path / "output" / fixture_film.stem / "real_saturday" / "1").glob("*.mp4")
+    )
     assert len(clips) == 2
     for clip in clips:
         info = probe(clip)
