@@ -23,18 +23,10 @@ from cutlist.shell import ToolError
 
 app = typer.Typer(help="Assemble short captioned clips from a feature film.")
 
-# Every failure mode a command can hit that isn't a click/typer usage error:
-# a missing input file, a broken preset, a font that can't render the
-# caption, footage too thin to draft from, an external tool dying, or a
-# rating command asked to touch a clip/segment/verdict/mark that doesn't
-# exist or doesn't validate. Deliberately a curated allowlist rather than
-# bare ValueError/LookupError -- those also catch concat()'s "nothing to
-# concatenate" invariant check and probe.py's unguarded ffprobe parsing
-# (dict indexing and float()/int()/Fraction() on "N/A"), which are bugs
-# that should traceback, not report as a clean one-liner. A person running
-# this by hand should see one clean line for a *known* failure, not a
-# stack trace through scenedetect/opencv/ffmpeg internals -- and a stack
-# trace for anything else.
+# Known failure modes get one clean line on stderr; everything else keeps its
+# traceback. Deliberately an allowlist rather than bare ValueError/LookupError,
+# which would also swallow concat()'s empty-input check and probe.py's
+# unguarded ffprobe parsing -- those are bugs and should look like bugs.
 HANDLED_ERRORS = (
     ToolError, PresetError, FontError, NotEnoughFootage, FileNotFoundError,
     store.RatingError, store.RatingNotFound,
@@ -204,6 +196,8 @@ def _draft_clips(
     # Rooted in the cache dir and scoped by a random token: two concurrent
     # drafts of the same video and preset must not share a scratch path.
     scratch_root = workspace.cache_for(video) / f"scratch_{uuid.uuid4().hex[:8]}"
+    # Keyed per run rather than per film: concurrent drafts of the same video
+    # with different captions or presets must not overwrite each other's PNG.
     caption_png = render_caption(spec.caption, spec.output, scratch_root / "caption.png")
 
     written = 0

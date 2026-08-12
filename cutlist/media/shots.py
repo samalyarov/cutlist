@@ -53,17 +53,10 @@ def _merge_short(shots: list[Shot], minimum: float) -> list[Shot]:
         else:
             merged.append(shot)
 
-    # A short shot at the very start has no predecessor to absorb into, so
-    # it has to fold forward into whatever comes after it instead. Loop
-    # rather than a single check because a flash frame or logo sting can
-    # leave several short shots stacked at the head. If merging collapses
-    # everything down to one shot that's still under the minimum,
-    # len(merged) > 1 is false and it survives unmerged — there's nothing
-    # left to fold it into. detect_shots itself can no longer produce that
-    # single-shot input now that a cut-free video yields one scene spanning
-    # the whole thing rather than none, but a caller handing _merge_short a
-    # lone short shot directly (as the test below does) still needs this to
-    # not drop it.
+    # A short shot at the head has no predecessor to absorb into, so it folds
+    # forward instead. A loop, not a single check: a flash frame or logo sting
+    # can leave several short shots stacked at the start. The len > 1 guard
+    # leaves a lone short shot alone -- there is nothing to fold it into.
     while len(merged) > 1 and merged[0].duration < minimum:
         head, following = merged[0], merged[1]
         merged[0:2] = [Shot(head.index, head.start, following.end)]

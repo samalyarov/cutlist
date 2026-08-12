@@ -98,8 +98,8 @@ GROUP BY clip_id, film_hash;
 
 MIGRATIONS = [_V1]
 
-# Derived rather than written by hand to prevent drift: if a later task appends
-# _V2 without bumping this constant, the constant would silently become a lie.
+# Derived, never hand-written: a constant that has to be bumped alongside the
+# list is a constant that will eventually disagree with it.
 SCHEMA_VERSION = len(MIGRATIONS)
 
 

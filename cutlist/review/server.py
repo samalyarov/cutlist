@@ -21,10 +21,8 @@ _CHUNK = 64 * 1024
 def _is_id(value) -> bool:
     """Is this a usable row id from a JSON body?
 
-    `isinstance(True, int)` is True in Python, so a bare int check accepts
-    booleans: {"clip_id": true} would validate and rate clip 1, and
-    {"segment_id": true} would mark segment 1 -- rows the caller never named.
-    Shared by both checks so the two cannot drift apart again.
+    `isinstance(True, int)` is True in Python, so a bare int check would accept
+    {"clip_id": true} and rate clip 1 -- a row the caller never named.
     """
     return isinstance(value, int) and not isinstance(value, bool)
 
@@ -264,10 +262,8 @@ class ReviewHandler(BaseHTTPRequestHandler):
                 )
             if verdict is not None:
                 store.rate_clip(conn, clip_id=clip_id, verdict=verdict)
-        # The store's own rating errors only. Catching bare ValueError /
-        # LookupError here would dress a genuine bug inside store up as a
-        # confident 400, which is the wide behaviour the CLI boundary was
-        # deliberately narrowed away from.
+        # The store's own rating errors only. Catching bare ValueError or
+        # LookupError would dress a genuine bug inside store up as a 400.
         except (store.RatingError, store.RatingNotFound) as exc:
             self._send_error(400, str(exc))
             return

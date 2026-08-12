@@ -93,9 +93,8 @@ def test_draft_records_a_clip_row_per_rendered_file(
 def test_two_drafts_of_the_same_film_and_preset_do_not_share_files(
     fixture_film, preset_file, tmp_path
 ):
-    # Clips are named by ordinal, so before runs got their own output
-    # directory the second draft overwrote the first's files while the first
-    # run's clip rows kept claiming those paths.
+    # Clips are named by ordinal: two runs sharing one output directory would
+    # overwrite each other's files while their `clip` rows still claimed them.
     assert _draft(fixture_film, preset_file, tmp_path).exit_code == 0
     assert _draft(fixture_film, preset_file, tmp_path).exit_code == 0
 
@@ -113,9 +112,8 @@ def test_two_drafts_of_the_same_film_and_preset_do_not_share_files(
 def test_after_two_drafts_each_path_resolves_to_its_own_run(
     fixture_film, preset_file, tmp_path
 ):
-    # The aliasing this guards against: clip_by_path used to hand back
-    # whichever run recorded the path first, so a verdict typed against the
-    # bytes on disk landed on a different run's segments.
+    # clip_by_path must resolve to the run that actually owns the path: an
+    # ambiguous path would let a verdict land on a different run's segments.
     assert _draft(fixture_film, preset_file, tmp_path).exit_code == 0
     assert _draft(fixture_film, preset_file, tmp_path).exit_code == 0
 

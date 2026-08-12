@@ -205,9 +205,8 @@ def test_a_bug_inside_store_is_not_reported_as_a_bad_request(
 ):
     """A plain ValueError out of store is a bug, not a malformed request.
 
-    The writes used to be wrapped in a bare (ValueError, LookupError), which
-    turned any internal invariant failure into a confident 400 blaming the
-    caller's input. Only the store's own rating errors mean "bad request".
+    Only the store's own rating errors mean "bad request" -- a bare
+    ValueError or LookupError from store must not be reported as one.
     """
     def boom(*args, **kwargs):
         raise ValueError("internal invariant broke")

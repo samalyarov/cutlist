@@ -100,12 +100,8 @@ def test_draft_caption_override_is_accepted(fixture_film, tmp_path):
 
 
 def test_draft_caption_pngs_do_not_collide_across_runs(fixture_film, tmp_path, monkeypatch):
-    # caption.png used to live at cache_for(film) / "caption.png", keyed on
-    # the film alone. Two runs of the same film with different captions
-    # would both reach for that one path, and the later render_caption call
-    # would overwrite the PNG the earlier run's still-encoding segments were
-    # reading from. Scoping it under each run's own (uuid-tagged) scratch
-    # root means the two runs never touch the same file.
+    # caption.png is keyed per run, not per film: concurrent drafts of the
+    # same film with different captions must not overwrite each other's PNG.
     seen_paths = []
     original = cli.render_caption
 
