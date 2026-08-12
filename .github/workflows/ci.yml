@@ -20,10 +20,12 @@ jobs:
       # ffmpeg and ffprobe drive every media test. fonts-dejavu-core installs
       # DejaVuSans-Bold at the exact path caption.py falls back to on Linux,
       # which is what makes captions work here and in the container.
+      # scenedetect drags in the non-headless opencv build, which needs libGL even
+      # though cutlist itself pins the headless one.
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ffmpeg fonts-dejavu-core
+          sudo apt-get install -y --no-install-recommends ffmpeg fonts-dejavu-core libgl1
 
       - name: Install
         run: pip install -e ".[dev]"

@@ -52,8 +52,12 @@ def film_with_cover_art(tmp_path):
         "ffmpeg", "-y", "-v", "error",
         "-i", str(base), "-i", str(cover),
         "-map", "0:v", "-map", "1:v",
-        "-c:v:0", "libx264", "-pix_fmt", "yuv420p",
-        "-c:v:1", "mjpeg", "-disposition:v:1", "attached_pic",
+        # Per-stream pixel formats: MJPEG needs full-range yuvj420p, and a global
+        # -pix_fmt silently applies to all output streams including the cover art,
+        # which stricter ffmpeg builds reject as non-compliant.
+        "-c:v:0", "libx264", "-pix_fmt:v:0", "yuv420p",
+        "-c:v:1", "mjpeg", "-pix_fmt:v:1", "yuvj420p",
+        "-disposition:v:1", "attached_pic",
         str(out),
     ])
     return out
