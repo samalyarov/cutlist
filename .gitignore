@@ -33,6 +33,11 @@ work/
 output/
 references/
 
+# Presets are personal -- captions, pacing, whatever someone is making. Only
+# the sample is tracked, as the thing to copy when writing your own.
+presets/*
+!presets/sample_preset.yaml
+
 # Media, anywhere in the tree. Drop a `!path/to/clip.mp4` line below if a
 # specific clip ever needs to be tracked as a test fixture.
 *.mp4

@@ -45,7 +45,7 @@ def test_shots_command_succeeds_on_a_cut_free_film(cutfree_film):
 def test_draft_writes_playable_clips(fixture_film, tmp_path):
     result = runner.invoke(app, [
         "draft", str(fixture_film),
-        "--preset", "presets/real_saturday.yaml",
+        "--preset", "presets/sample_preset.yaml",
         "--count", "2",
         "--root", str(tmp_path),
         "--seed", "0",
@@ -55,7 +55,7 @@ def test_draft_writes_playable_clips(fixture_film, tmp_path):
     # "1" is the run id: a fresh workspace means this draft opens run 1, and
     # each run gets its own output directory.
     clips = sorted(
-        (tmp_path / "output" / fixture_film.stem / "real_saturday" / "1").glob("*.mp4")
+        (tmp_path / "output" / fixture_film.stem / "sample_preset" / "1").glob("*.mp4")
     )
     assert len(clips) == 2
     for clip in clips:
@@ -71,7 +71,7 @@ def test_draft_clips_returns_the_run_scoped_output_directory(tmp_path, fixture_f
     from cutlist.paths import Workspace
     from cutlist.presets import load_preset
 
-    preset_path = Path("presets/real_saturday.yaml")
+    preset_path = Path("presets/sample_preset.yaml")
     spec = load_preset(preset_path)
     workspace = Workspace(root=tmp_path)
     conn = connect(workspace.database)
@@ -89,7 +89,7 @@ def test_draft_clips_returns_the_run_scoped_output_directory(tmp_path, fixture_f
 def test_draft_caption_override_is_accepted(fixture_film, tmp_path):
     result = runner.invoke(app, [
         "draft", str(fixture_film),
-        "--preset", "presets/real_saturday.yaml",
+        "--preset", "presets/sample_preset.yaml",
         "--caption", "ДРУГОЙ ТЕКСТ",
         "--count", "1",
         "--root", str(tmp_path),
@@ -118,7 +118,7 @@ def test_draft_caption_pngs_do_not_collide_across_runs(fixture_film, tmp_path, m
     for text in ("FIRST CAPTION", "SECOND CAPTION"):
         result = runner.invoke(app, [
             "draft", str(fixture_film),
-            "--preset", "presets/real_saturday.yaml",
+            "--preset", "presets/sample_preset.yaml",
             "--caption", text,
             "--count", "1",
             "--root", str(tmp_path),
@@ -149,7 +149,7 @@ def test_shots_missing_film_exits_nonzero_with_clean_error(tmp_path):
 def test_draft_missing_film_exits_nonzero_with_clean_error(tmp_path):
     result = runner.invoke(app, [
         "draft", str(tmp_path / "nope.mp4"),
-        "--preset", "presets/real_saturday.yaml",
+        "--preset", "presets/sample_preset.yaml",
     ])
     assert result.exit_code != 0
     assert "error: no such file" in result.output
@@ -184,7 +184,7 @@ def test_draft_font_error_reports_clean_error(fixture_film, tmp_path, monkeypatc
 
     result = runner.invoke(app, [
         "draft", str(fixture_film),
-        "--preset", "presets/real_saturday.yaml",
+        "--preset", "presets/sample_preset.yaml",
         "--root", str(tmp_path),
     ])
     assert result.exit_code != 0
@@ -206,7 +206,7 @@ def test_draft_reports_partial_progress_on_mid_loop_failure(fixture_film, tmp_pa
 
     result = runner.invoke(app, [
         "draft", str(fixture_film),
-        "--preset", "presets/real_saturday.yaml",
+        "--preset", "presets/sample_preset.yaml",
         "--count", "3",
         "--root", str(tmp_path),
         "--seed", "0",

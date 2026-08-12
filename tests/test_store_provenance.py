@@ -20,9 +20,9 @@ def _film(conn, film_hash="abc123", name="fixture.mp4"):
 def _run(conn, film_hashes):
     return store.start_run(
         conn,
-        preset_name="real_saturday",
+        preset_name="sample_preset",
         preset_sha256="deadbeef",
-        preset_json='{"name": "real_saturday"}',
+        preset_json='{"name": "sample_preset"}',
         caption_text="TOMORROW",
         seed=7,
         cutlist_version="0.1.0",

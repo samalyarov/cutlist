@@ -47,9 +47,9 @@ the footage they were made about. Example:
 
 ```
 cutlist draft "input/my-video.mp4" \
-  --preset presets/real_saturday.yaml \
+  --preset presets/sample_preset.yaml \
   --count 5 \
-  --caption "ЗАВТРА РИЛ СУББОТА"
+  --caption "SAMPLE CAPTION"
 ```
 
 `--seed` fixes the RNG for a reproducible draft. `--root` sets where
@@ -59,12 +59,12 @@ directory).
 ## Presets
 
 A preset is a YAML file with three blocks: `caption`, `rhythm`, `output`.
-See `presets/real_saturday.yaml` for a working example.
+See `presets/sample_preset.yaml` for a working example.
 
 ```yaml
-name: real_saturday
+name: sample_preset
 caption:
-  text: "ЗАВТРА РИЛ СУББОТА"   # overridable with --caption
+  text: "SAMPLE CAPTION"        # overridable with --caption
   position: top_center          # top_center | bottom_center
   size_frac: 0.125               # fraction of output height
   fill: "#FFFFFF"
@@ -86,8 +86,11 @@ the total clip duration. All three must be mutually reachable -- a preset
 asking for a total no segment count can actually hit is rejected at load
 time with an explanation of what totals are achievable.
 
-To add a preset, copy `real_saturday.yaml`, change the caption and rhythm
+To add a preset, copy `sample_preset.yaml`, change the caption and rhythm
 numbers, and pass its path to `--preset`. No code changes needed.
+
+Only the sample preset is tracked; `presets/` is otherwise ignored, so your own
+presets stay yours.
 
 ## Rating
 

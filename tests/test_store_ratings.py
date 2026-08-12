@@ -13,7 +13,7 @@ def conn(tmp_path):
 def clip_id(conn):
     store.record_film(conn, film_hash="abc", display_name="fixture.mp4", duration_s=30.0)
     run_id = store.start_run(
-        conn, preset_name="real_saturday", preset_sha256="sha", preset_json="{}",
+        conn, preset_name="sample_preset", preset_sha256="sha", preset_json="{}",
         caption_text="TOMORROW", seed=7, cutlist_version="0.1.0", film_hashes=["abc"],
     )
     return store.record_clip(
@@ -92,7 +92,7 @@ def test_clips_for_review_hides_clips_that_already_have_a_verdict(conn, clip_id)
 
 
 def test_clips_for_review_filters_by_preset(conn, clip_id):
-    assert store.clips_for_review(conn, preset="real_saturday")
+    assert store.clips_for_review(conn, preset="sample_preset")
     assert store.clips_for_review(conn, preset="nope") == []
 
 
