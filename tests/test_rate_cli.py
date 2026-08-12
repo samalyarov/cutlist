@@ -24,6 +24,10 @@ def workspace(tmp_path):
             store.SegmentRecord("abc", 8.0, 10.0, 7.5, 10.5, 1),
         ],
     )
+    # rate now refuses a verdict unless the clip's file is actually on disk.
+    clip_dir = tmp_path / "output"
+    clip_dir.mkdir()
+    (clip_dir / "01.mp4").write_bytes(b"")
     return tmp_path
 
 

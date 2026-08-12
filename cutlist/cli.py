@@ -17,7 +17,7 @@ from cutlist.media.probe import probe as probe_video
 from cutlist.media.render import render_clip
 from cutlist.media.shots import detect_shots
 from cutlist.media.thumbs import thumbnail_bytes
-from cutlist.paths import Workspace, video_id
+from cutlist.paths import Workspace, resolve_within, video_id
 from cutlist.presets import PresetError, load_preset
 from cutlist.select.naive import NotEnoughFootage, draft_picks
 from cutlist.shell import ToolError
@@ -309,6 +309,13 @@ def rate(
             raise store.RatingNotFound(
                 f"clip has {len(by_position)} segments; no segment {position}"
             )
+
+    resolved = resolve_within(root, row["path"])
+    if resolved is None or not resolved.exists():
+        raise store.RatingNotFound(
+            f"clip file is missing at {row['path']}; it cannot be given a verdict "
+            f"(rerender it first)"
+        )
 
     store.rate_clip(conn, clip_id=row["id"], verdict=verdict, note=note)
     for position, mark in marks:

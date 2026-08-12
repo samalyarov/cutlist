@@ -99,6 +99,10 @@ video { max-width: 100%; max-height: 100%; display: block; background: #000; }
   background-image: repeating-linear-gradient(
     45deg, transparent 0 6px, rgba(0, 0, 0, 0.35) 6px 12px);
 }
+/* A clip whose file is gone. Stated, not styled away: the queue position is
+   still real and the segments are still markable. */
+#stage.gone { color: var(--dim); font-family: var(--mono); }
+#stage.gone video { display: none; }
 #help {
   position: fixed; inset: 0; background: rgba(0, 0, 0, 0.85);
   display: none; align-items: center; justify-content: center;
@@ -119,7 +123,7 @@ video { max-width: 100%; max-height: 100%; display: block; background: #000; }
   <span class="dim tc" id="clock"></span>
 </header>
 
-<div id="stage"><video id="player" preload="metadata" muted playsinline></video></div>
+<div id="stage"><video id="player" preload="metadata" muted playsinline></video><span id="gone"></span></div>
 
 <div id="strip"></div>
 
@@ -143,12 +147,15 @@ video { max-width: 100%; max-height: 100%; display: block; background: #000; }
   <tr><td><kbd>g</kbd> <kbd>b</kbd> <kbd>v</kbd></td><td>good / bad / veto &mdash; press another to overwrite</td></tr>
   <tr><td><kbd>f</kbd> <kbd>o</kbd> <kbd>n</kbd></td><td>fire / ok / no, then advance</td></tr>
   <tr><td><kbd>z</kbd></td><td>reopen the last rated clip</td></tr>
+  <tr><td class="dim">missing</td><td>file deleted &mdash; marks still count, verdicts do not</td></tr>
   <tr><td><kbd>?</kbd></td><td>close this</td></tr>
 </table>
 </div></div>
 
 <script>
 const player = document.getElementById("player");
+const stage = document.getElementById("stage");
+const gone = document.getElementById("gone");
 const strip = document.getElementById("strip");
 const echo = document.getElementById("echo");
 const countEl = document.getElementById("count");
@@ -183,8 +190,16 @@ async function show(i) {
   const rated = detail.verdict ? ` · rated ${detail.verdict}` : "";
   metaEl.textContent =
     `${detail.preset_name} · "${detail.caption_text}" · seed ${detail.seed}${rated}`;
-  player.src = `/media/clip/${clip.id}`;
-  player.play().catch(() => {});
+  stage.classList.toggle("gone", clip.available === false);
+  if (clip.available === false) {
+    player.removeAttribute("src"); player.load();
+    gone.textContent = "file missing — rerender to rate this clip";
+    clockEl.textContent = "";
+  } else {
+    gone.textContent = "";
+    player.src = `/media/clip/${clip.id}`;
+    player.play().catch(() => {});
+  }
   draw();
 }
 
@@ -246,6 +261,10 @@ async function mark(kind) {
 async function verdict(kind) {
   const clip = current();
   if (!clip) return;
+  if (clip.available === false) {
+    say("file missing — rerender before rating this clip", true);
+    return;
+  }
   if (await post({ clip_id: clip.id, verdict: kind })) {
     lastVerdict = clip.id;
     say(`clip ${index + 1} → ${kind} · z undo`);

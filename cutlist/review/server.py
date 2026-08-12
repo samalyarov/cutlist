@@ -73,6 +73,16 @@ class ReviewHandler(BaseHTTPRequestHandler):
     def _resolve_within_root(self, relative: str) -> Path | None:
         return resolve_within(self.config["root"], relative)
 
+    def _is_available(self, relative: str) -> bool:
+        """Is the clip's file actually on disk right now?
+
+        Computed rather than stored: a recorded 'this file is gone' flag can
+        only ever be a stale claim about a filesystem that changed without
+        telling us.
+        """
+        resolved = self._resolve_within_root(relative)
+        return resolved is not None and resolved.exists()
+
     def _send_file(self, path: Path, content_type: str) -> None:
         """Serve a file, honouring a single-range request.
 
@@ -144,12 +154,15 @@ class ReviewHandler(BaseHTTPRequestHandler):
 
         if path == "/api/clips":
             conn = self._db()
-            self._send_json(store.clips_for_review(
+            clips = store.clips_for_review(
                 conn,
                 video=self.config["video"],
                 preset=self.config["preset"],
                 unrated_only=self.config["unrated_only"],
-            ))
+            )
+            for clip in clips:
+                clip["available"] = self._is_available(clip["path"])
+            self._send_json(clips)
             return
 
         match = _CLIP.match(path)
@@ -158,6 +171,7 @@ class ReviewHandler(BaseHTTPRequestHandler):
             if detail is None:
                 self._send_error(404, "no such clip")
                 return
+            detail["available"] = self._is_available(detail["path"])
             self._send_json(detail)
             return
 
@@ -230,8 +244,12 @@ class ReviewHandler(BaseHTTPRequestHandler):
         # Everything is validated before anything is written, so a bad mark
         # never leaves a verdict recorded without it, and no earlier mark in
         # the same list is left committed while a later one fails.
-        if not _is_id(clip_id) or store.clip_detail(conn, clip_id) is None:
+        detail = store.clip_detail(conn, clip_id) if _is_id(clip_id) else None
+        if detail is None:
             self._send_error(400, "clip_id must name a recorded clip")
+            return
+        if verdict is not None and not self._is_available(detail["path"]):
+            self._send_error(400, "clip file is missing; it cannot be given a verdict")
             return
         if verdict is not None and verdict not in store.VERDICTS:
             self._send_error(400, f"verdict must be one of {', '.join(store.VERDICTS)}")
