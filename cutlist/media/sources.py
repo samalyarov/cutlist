@@ -5,9 +5,12 @@ from cutlist.paths import video_id
 # What `draft` can be pointed at. Matched case-insensitively.
 VIDEO_SUFFIXES = frozenset({".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v"})
 
-# A resolution that succeeded stays true until the file moves again, and the
-# review server resolves the same source once per thumbnail. Misses are not
-# cached: a source that was absent a moment ago may have just been copied in.
+# A cache hit saves the directory walk, not the content check: every hit is
+# revalidated against `video_id` before it is trusted, since a file can be
+# overwritten in place (a corrected re-encode saved over the same path) and
+# stop matching the hash it was cached under without ever moving. Misses are
+# not cached: a source that was absent a moment ago may have just been copied
+# in.
 _resolved: dict[tuple[str, str], Path] = {}
 
 
@@ -26,7 +29,7 @@ def find_source(
     """
     key = (str(root), video_hash)
     cached = _resolved.get(key)
-    if cached is not None and cached.exists():
+    if cached is not None and cached.exists() and video_id(cached) == video_hash:
         return cached
 
     directory = Path(root) / "input"

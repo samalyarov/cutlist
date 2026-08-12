@@ -1,4 +1,5 @@
 import shutil
+from pathlib import Path
 
 from cutlist.media.sources import find_source
 from cutlist.paths import resolve_within, video_id
@@ -60,3 +61,14 @@ def test_resolve_within_joins_a_workspace_relative_path(tmp_path):
     assert resolve_within(tmp_path, "output/x/1/01.mp4") == (
         tmp_path / "output" / "x" / "1" / "01.mp4"
     ).resolve()
+
+
+def test_resolve_within_rejects_an_absolute_path(tmp_path):
+    outside = str(Path(tmp_path.anchor) / "etc" / "passwd")
+    assert resolve_within(tmp_path, outside) is None
+
+
+def test_resolve_within_rejects_a_prefix_sibling_path(tmp_path):
+    """`.../bc` must not pass as inside `.../b` just because it starts with it."""
+    root = tmp_path / "b"
+    assert resolve_within(root, "../bc/clip.mp4") is None
