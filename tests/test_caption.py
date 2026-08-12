@@ -9,12 +9,20 @@ from cutlist.presets import CaptionSpec, OutputSpec, PresetError
 
 OUTPUT = OutputSpec(width=854, height=480, fps=25, crf=20)
 
+# A neutral placeholder caption. Deliberately Cyrillic, not Latin: several
+# tests below exercise glyph-coverage checks and width-sensitive behavior
+# that only shows up with non-Latin text, so swapping the script would gut
+# them. Kept at 18 characters -- the same length as the phrase it replaced --
+# because the font-shrinking test and the MAX_WIDTH_FRAC assertions measure
+# rendered width against this string.
+CAPTION = "ПРИМЕР НАДПИСИ ТУТ"
+
 # Ships with Windows and has no Cyrillic coverage -- exactly the "font draws
 # tofu" scenario the glyph-coverage check exists to catch.
 FONT_WITHOUT_CYRILLIC = Path(r"C:\Windows\Fonts\OCRAEXT.TTF")
 
 
-def render(tmp_path, text="ЗАВТРА РИЛ СУББОТА"):
+def render(tmp_path, text=CAPTION):
     dest = tmp_path / "caption.png"
     return Image.open(render_caption(CaptionSpec(text=text), OUTPUT, dest))
 
@@ -51,7 +59,7 @@ def test_is_horizontally_centred(tmp_path):
 
 
 def test_bottom_center_draws_in_the_bottom_band(tmp_path):
-    spec = CaptionSpec(text="ЗАВТРА РИЛ СУББОТА", position="bottom_center")
+    spec = CaptionSpec(text=CAPTION, position="bottom_center")
     dest = render_caption(spec, OUTPUT, tmp_path / "caption.png")
     image = Image.open(dest)
     alpha = image.getchannel("A")
@@ -60,7 +68,7 @@ def test_bottom_center_draws_in_the_bottom_band(tmp_path):
 
 
 def test_bottom_center_leaves_the_top_untouched(tmp_path):
-    spec = CaptionSpec(text="ЗАВТРА РИЛ СУББОТА", position="bottom_center")
+    spec = CaptionSpec(text=CAPTION, position="bottom_center")
     dest = render_caption(spec, OUTPUT, tmp_path / "caption.png")
     image = Image.open(dest)
     alpha = image.getchannel("A")
@@ -71,7 +79,7 @@ def test_bottom_center_leaves_the_top_untouched(tmp_path):
 def test_unrecognised_position_raises_preset_error(tmp_path):
     # A typo in the preset's caption.position should be loud, not a silent
     # fall-through to whatever the default happens to render.
-    spec = CaptionSpec(text="ЗАВТРА РИЛ СУББОТА", position="middle_left")
+    spec = CaptionSpec(text=CAPTION, position="middle_left")
     with pytest.raises(PresetError):
         render_caption(spec, OUTPUT, tmp_path / "caption.png")
 
@@ -99,26 +107,26 @@ def test_font_missing_cyrillic_glyphs_is_rejected(tmp_path):
     # Cyrillic are *denser* than real letterforms, not sparser, so a
     # threshold on ink alone would pass this font. Glyph-bitmap comparison
     # against .notdef is what actually detects the missing coverage.
-    spec = CaptionSpec(text="ЗАВТРА РИЛ СУББОТА", font=str(FONT_WITHOUT_CYRILLIC))
+    spec = CaptionSpec(text=CAPTION, font=str(FONT_WITHOUT_CYRILLIC))
     with pytest.raises(FontError):
         render_caption(spec, OUTPUT, tmp_path / "caption.png")
 
 
 def test_long_caption_shrinks_to_fit_instead_of_clipping(tmp_path):
-    text = "ЗАВТРА РИЛ СУББОТА " * 3
+    text = (CAPTION + " ") * 3
     image = render(tmp_path, text)
     box = image.getchannel("A").getbbox()
     assert box[2] - box[0] <= OUTPUT.width * MAX_WIDTH_FRAC + 1
 
 
 def test_unrenderably_long_caption_raises_font_error(tmp_path):
-    text = "ЗАВТРА РИЛ СУББОТА " * 20
+    text = (CAPTION + " ") * 20
     with pytest.raises(FontError):
         render_caption(CaptionSpec(text=text), OUTPUT, tmp_path / "caption.png")
 
 
 def test_large_outline_does_not_clip_at_the_top(tmp_path):
-    text = "ЗАВТРА РИЛ СУББОТА"
+    text = CAPTION
     spec = CaptionSpec(text=text, outline_frac=0.05)
     dest = render_caption(spec, OUTPUT, tmp_path / "caption.png")
     image = Image.open(dest)
