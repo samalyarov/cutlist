@@ -147,11 +147,28 @@ def migrate(conn: sqlite3.Connection) -> None:
     current = conn.execute("PRAGMA user_version").fetchone()[0]
     for version, statements in enumerate(MIGRATIONS, start=1):
         if current < version:
-            conn.executescript(statements)
+            # executescript() commits any pending transaction before it runs, and
+            # then executes the script in autocommit mode unless the script itself
+            # opens a transaction -- so without an explicit BEGIN, each DDL
+            # statement commits on its own as it runs. _V1 could get away with
+            # that because every statement is CREATE ... IF NOT EXISTS and the
+            # whole script is safe to replay. A rename migration cannot: killed
+            # after `ALTER TABLE film RENAME TO video` but before `run_film` is
+            # renamed, user_version is still the old value, so the next connect()
+            # replays the same script from the top against a database that no
+            # longer has a `film` table -- unreadable and unmigratable. The BEGIN
+            # has to live inside the script text, because executescript's own
+            # implicit commit happens before any separately issued BEGIN would
+            # take effect. PRAGMA user_version is itself part of the database's
+            # transactional state, so stamping it inside the same transaction
+            # means the schema change and the version marker commit together or
+            # both roll back.
+            #
             # PRAGMA does not accept bound parameters. version comes from
             # enumerate over a module-level list, so it is always an int.
-            conn.execute(f"PRAGMA user_version = {version:d}")
-    conn.commit()
+            conn.executescript(
+                f"BEGIN;\n{statements}\nPRAGMA user_version = {version:d};\nCOMMIT;"
+            )
 
 
 def connect(path: Path) -> sqlite3.Connection:

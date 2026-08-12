@@ -21,7 +21,7 @@ from cutlist.presets import PresetError, load_preset
 from cutlist.select.naive import NotEnoughFootage, draft_picks
 from cutlist.shell import ToolError
 
-app = typer.Typer(help="Assemble short captioned clips from a feature video.")
+app = typer.Typer(help="Assemble short captioned clips from a long video.")
 
 # Known failure modes get one clean line on stderr; everything else keeps its
 # traceback. Deliberately an allowlist rather than bare ValueError/LookupError,

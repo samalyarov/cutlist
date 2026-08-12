@@ -25,7 +25,7 @@ htmlcov/
 !.env.example
 *.local.yaml
 
-# Source films, per-movie indexes, run workdirs, rendered clips.
+# Source videos, per-video indexes, run workdirs, rendered clips.
 # Large, regenerable, or not ours to redistribute.
 input/
 cache/
