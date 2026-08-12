@@ -1,5 +1,5 @@
-from tests.conftest import FIXTURE_DURATION
 from cutlist.shell import run
+from tests.conftest import FIXTURE_DURATION
 
 
 def test_fixture_film_has_expected_shape(fixture_film):

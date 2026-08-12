@@ -4,7 +4,7 @@ import pytest
 
 from cutlist.media.shots import Shot
 from cutlist.presets import RhythmSpec
-from cutlist.select.naive import NotEnoughFootage, Pick, draft_picks, _grow_toward, _shrink_toward
+from cutlist.select.naive import NotEnoughFootage, Pick, _grow_toward, _shrink_toward, draft_picks
 
 
 def test_shrink_toward_moves_each_duration_down_in_proportion_to_its_slack():

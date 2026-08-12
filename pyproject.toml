@@ -24,7 +24,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+dev = ["pytest>=8.0", "ruff>=0.6"]
 
 [project.scripts]
 cutlist = "cutlist.cli:app"
@@ -48,3 +48,17 @@ include = ["cutlist*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+# Deliberately lint-only. `ruff format` is not adopted: this codebase is
+# hand-wrapped so that related arguments group on a line, and a formatter
+# would flatten that back out.
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[tool.ruff.lint.per-file-ignores]
+# Fixtures and helpers are imported for their side effects on the namespace.
+"tests/conftest.py" = ["F401"]
