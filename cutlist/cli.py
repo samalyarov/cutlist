@@ -19,6 +19,7 @@ from cutlist.media.shots import detect_shots
 from cutlist.media.thumbs import thumbnail_bytes
 from cutlist.paths import Workspace, resolve_within, video_id
 from cutlist.presets import PresetError, load_preset
+from cutlist.rebuild import RebuildError, rebuild_clip
 from cutlist.select.naive import NotEnoughFootage, draft_picks
 from cutlist.shell import ToolError
 
@@ -30,7 +31,7 @@ app = typer.Typer(help="Assemble short captioned clips from a long video.")
 # unguarded ffprobe parsing -- those are bugs and should look like bugs.
 HANDLED_ERRORS = (
     ToolError, PresetError, FontError, NotEnoughFootage, FileNotFoundError,
-    store.RatingError, store.RatingNotFound,
+    store.RatingError, store.RatingNotFound, RebuildError,
 )
 
 
@@ -389,3 +390,20 @@ def review(
         typer.echo("\nstopped")
     finally:
         httpd.server_close()
+
+
+@app.command()
+@handle_errors
+def rerender(
+    clip: str = typer.Argument(..., help="Path of the clip, as written by draft."),
+    root: Path = typer.Option(Path("."), "--root", help="Workspace root."),
+) -> None:
+    """Rebuild a clip from its recorded segments and preset."""
+    conn = connect(Workspace(root=root).database)
+    wanted = Path(clip).as_posix()
+    row = store.clip_by_path(conn, wanted)
+    if row is None:
+        raise store.RatingNotFound(f"no recorded clip at {wanted}")
+
+    written = rebuild_clip(conn, root=root, clip_id=row["id"])
+    typer.echo(f"rebuilt {wanted} ({written.stat().st_size / 1024:.0f} KB)")

@@ -257,7 +257,7 @@ def clip_detail(conn: sqlite3.Connection, clip_id: int) -> dict | None:
     row = conn.execute(
         f"""
         SELECT clip.id, clip.ordinal, clip.path, clip.duration_s,
-               run.preset_name, run.caption_text, run.seed,
+               run.preset_name, run.caption_text, run.seed, run.preset_json,
                ({_LATEST_VERDICT}) AS verdict
         FROM clip JOIN run ON run.id = clip.run_id
         WHERE clip.id = ?

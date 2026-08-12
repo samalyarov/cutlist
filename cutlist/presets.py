@@ -49,7 +49,8 @@ class Preset:
         return replace(self, caption=replace(self.caption, text=text))
 
 
-def load_preset(path: Path) -> Preset:
+def load_preset(path: Path | str) -> Preset:
+    path = Path(path)
     raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
 
     name = raw.get("name") or path.stem
@@ -99,6 +100,21 @@ def _rhythm(block: dict) -> RhythmSpec:
         )
     except KeyError as exc:
         raise PresetError(f"rhythm is missing {exc}") from exc
+
+
+def preset_from_dict(data: dict) -> Preset:
+    """Rebuild a Preset from the JSON a run recorded.
+
+    The counterpart to `dataclasses.asdict` in cli._preset_fingerprint: a run
+    stores its fully resolved preset so a clip can be re-cut after the YAML has
+    been edited or deleted.
+    """
+    return Preset(
+        name=data["name"],
+        caption=CaptionSpec(**data["caption"]),
+        rhythm=RhythmSpec(**data["rhythm"]),
+        output=OutputSpec(**data["output"]),
+    )
 
 
 def _validate(rhythm: RhythmSpec) -> None:
