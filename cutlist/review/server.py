@@ -5,7 +5,9 @@ from pathlib import Path
 
 from cutlist.db import store
 from cutlist.db.schema import connect
+from cutlist.media.sources import find_source
 from cutlist.media.thumbs import thumbnail
+from cutlist.paths import resolve_within
 
 PAGE = Path(__file__).with_name("page.html")
 
@@ -63,30 +65,13 @@ class ReviewHandler(BaseHTTPRequestHandler):
         self._send_json({"ok": False, "error": message}, status=status)
 
     def _source_for(self, video_hash: str, conn) -> Path | None:
-        """Locate the original video a segment was cut from.
-
-        The database records a display name, not a path, because the file can
-        move. Look for it where the workspace keeps sources.
-        """
-        name = store.video_display_name(conn, video_hash)
-        if name is None:
-            return None
-        candidate = self.config["root"] / "input" / name
-        return candidate if candidate.exists() else None
+        """Locate the original video a segment was cut from."""
+        return find_source(
+            self.config["root"], video_hash, store.video_display_name(conn, video_hash)
+        )
 
     def _resolve_within_root(self, relative: str) -> Path | None:
-        """Join a workspace-relative path, refusing to leave the workspace.
-
-        `relative` comes from `clip.path` in the database. `draft` only ever
-        writes a path already relative to root, but nothing here enforces
-        that, so a future writer landing an absolute path or a `..` segment
-        must not gain filesystem access outside root.
-        """
-        root = self.config["root"].resolve()
-        candidate = (self.config["root"] / relative).resolve()
-        if not candidate.is_relative_to(root):
-            return None
-        return candidate
+        return resolve_within(self.config["root"], relative)
 
     def _send_file(self, path: Path, content_type: str) -> None:
         """Serve a file, honouring a single-range request.

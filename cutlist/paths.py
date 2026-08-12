@@ -30,6 +30,18 @@ def video_id(path: Path) -> str:
     return digest.hexdigest()
 
 
+def resolve_within(root: Path, relative: str) -> Path | None:
+    """Join a workspace-relative path, refusing to leave the workspace.
+
+    `relative` comes from `clip.path` in the database. Nothing enforces that a
+    writer put a relative path there, so an absolute path or a `..` segment
+    must not gain filesystem access outside root.
+    """
+    resolved_root = Path(root).resolve()
+    candidate = (Path(root) / relative).resolve()
+    return candidate if candidate.is_relative_to(resolved_root) else None
+
+
 @dataclass(frozen=True)
 class Workspace:
     """Where cutlist keeps things, split by what invalidates each directory."""
