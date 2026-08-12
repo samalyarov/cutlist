@@ -34,9 +34,9 @@ def preset_file(tmp_path):
     return path
 
 
-def _draft(fixture_film, preset_file, root, extra=()):
+def _draft(fixture_video, preset_file, root, extra=()):
     return runner.invoke(app, [
-        "draft", str(fixture_film),
+        "draft", str(fixture_video),
         "--preset", str(preset_file),
         "--count", "2",
         "--root", str(root),
@@ -44,8 +44,8 @@ def _draft(fixture_film, preset_file, root, extra=()):
     ])
 
 
-def test_draft_records_a_run_with_its_source(fixture_film, preset_file, tmp_path):
-    result = _draft(fixture_film, preset_file, tmp_path)
+def test_draft_records_a_run_with_its_source(fixture_video, preset_file, tmp_path):
+    result = _draft(fixture_video, preset_file, tmp_path)
     assert result.exit_code == 0, result.output
 
     conn = connect(tmp_path / "cutlist.sqlite")
@@ -53,26 +53,26 @@ def test_draft_records_a_run_with_its_source(fixture_film, preset_file, tmp_path
     assert run["preset_name"] == "test_preset"
     assert run["caption_text"] == "TEST"
     assert conn.execute(
-        "SELECT COUNT(*) FROM run_film WHERE run_id = ?", (run["id"],)
+        "SELECT COUNT(*) FROM run_video WHERE run_id = ?", (run["id"],)
     ).fetchone()[0] == 1
 
 
 def test_draft_always_records_a_seed_even_when_none_was_given(
-    fixture_film, preset_file, tmp_path
+    fixture_video, preset_file, tmp_path
 ):
-    _draft(fixture_film, preset_file, tmp_path)
+    _draft(fixture_video, preset_file, tmp_path)
     conn = connect(tmp_path / "cutlist.sqlite")
     assert conn.execute("SELECT seed FROM run").fetchone()["seed"] is not None
 
 
-def test_draft_records_the_supplied_seed(fixture_film, preset_file, tmp_path):
-    _draft(fixture_film, preset_file, tmp_path, extra=["--seed", "1234"])
+def test_draft_records_the_supplied_seed(fixture_video, preset_file, tmp_path):
+    _draft(fixture_video, preset_file, tmp_path, extra=["--seed", "1234"])
     conn = connect(tmp_path / "cutlist.sqlite")
     assert conn.execute("SELECT seed FROM run").fetchone()["seed"] == 1234
 
 
-def test_draft_stores_the_resolved_preset(fixture_film, preset_file, tmp_path):
-    _draft(fixture_film, preset_file, tmp_path)
+def test_draft_stores_the_resolved_preset(fixture_video, preset_file, tmp_path):
+    _draft(fixture_video, preset_file, tmp_path)
     conn = connect(tmp_path / "cutlist.sqlite")
     stored = json.loads(conn.execute("SELECT preset_json FROM run").fetchone()[0])
     assert stored["name"] == "test_preset"
@@ -80,9 +80,9 @@ def test_draft_stores_the_resolved_preset(fixture_film, preset_file, tmp_path):
 
 
 def test_draft_records_a_clip_row_per_rendered_file(
-    fixture_film, preset_file, tmp_path
+    fixture_video, preset_file, tmp_path
 ):
-    _draft(fixture_film, preset_file, tmp_path)
+    _draft(fixture_video, preset_file, tmp_path)
     conn = connect(tmp_path / "cutlist.sqlite")
     clips = conn.execute("SELECT * FROM clip ORDER BY ordinal").fetchall()
     assert [c["ordinal"] for c in clips] == [1, 2]
@@ -90,13 +90,13 @@ def test_draft_records_a_clip_row_per_rendered_file(
         assert (tmp_path / clip["path"]).exists()
 
 
-def test_two_drafts_of_the_same_film_and_preset_do_not_share_files(
-    fixture_film, preset_file, tmp_path
+def test_two_drafts_of_the_same_video_and_preset_do_not_share_files(
+    fixture_video, preset_file, tmp_path
 ):
     # Clips are named by ordinal: two runs sharing one output directory would
     # overwrite each other's files while their `clip` rows still claimed them.
-    assert _draft(fixture_film, preset_file, tmp_path).exit_code == 0
-    assert _draft(fixture_film, preset_file, tmp_path).exit_code == 0
+    assert _draft(fixture_video, preset_file, tmp_path).exit_code == 0
+    assert _draft(fixture_video, preset_file, tmp_path).exit_code == 0
 
     conn = connect(tmp_path / "cutlist.sqlite")
     rows = conn.execute("SELECT run_id, path FROM clip").fetchall()
@@ -110,12 +110,12 @@ def test_two_drafts_of_the_same_film_and_preset_do_not_share_files(
 
 
 def test_after_two_drafts_each_path_resolves_to_its_own_run(
-    fixture_film, preset_file, tmp_path
+    fixture_video, preset_file, tmp_path
 ):
     # clip_by_path must resolve to the run that actually owns the path: an
     # ambiguous path would let a verdict land on a different run's segments.
-    assert _draft(fixture_film, preset_file, tmp_path).exit_code == 0
-    assert _draft(fixture_film, preset_file, tmp_path).exit_code == 0
+    assert _draft(fixture_video, preset_file, tmp_path).exit_code == 0
+    assert _draft(fixture_video, preset_file, tmp_path).exit_code == 0
 
     conn = connect(tmp_path / "cutlist.sqlite")
     for expected in conn.execute("SELECT * FROM clip").fetchall():
@@ -132,9 +132,9 @@ def test_after_two_drafts_each_path_resolves_to_its_own_run(
 
 
 def test_every_recorded_segment_lies_inside_its_shot(
-    fixture_film, preset_file, tmp_path
+    fixture_video, preset_file, tmp_path
 ):
-    _draft(fixture_film, preset_file, tmp_path)
+    _draft(fixture_video, preset_file, tmp_path)
     conn = connect(tmp_path / "cutlist.sqlite")
     rows = conn.execute("SELECT * FROM segment").fetchall()
     assert rows
@@ -144,9 +144,9 @@ def test_every_recorded_segment_lies_inside_its_shot(
 
 
 def test_recorded_segment_durations_match_the_clip_duration(
-    fixture_film, preset_file, tmp_path
+    fixture_video, preset_file, tmp_path
 ):
-    _draft(fixture_film, preset_file, tmp_path)
+    _draft(fixture_video, preset_file, tmp_path)
     conn = connect(tmp_path / "cutlist.sqlite")
     for clip in conn.execute("SELECT * FROM clip"):
         total = conn.execute(
@@ -157,7 +157,7 @@ def test_recorded_segment_durations_match_the_clip_duration(
 
 
 def test_a_mid_loop_failure_still_records_the_run_and_the_clips_that_landed(
-    fixture_film, preset_file, tmp_path, monkeypatch
+    fixture_video, preset_file, tmp_path, monkeypatch
 ):
     # Same flaky-render mechanism as
     # test_draft_reports_partial_progress_on_mid_loop_failure in
@@ -173,7 +173,7 @@ def test_a_mid_loop_failure_still_records_the_run_and_the_clips_that_landed(
 
     monkeypatch.setattr(cli, "render_clip", flaky)
 
-    result = _draft(fixture_film, preset_file, tmp_path, extra=["--count", "3"])
+    result = _draft(fixture_video, preset_file, tmp_path, extra=["--count", "3"])
 
     # Confirm this is genuinely a mid-loop failure, not one at startup.
     assert result.exit_code != 0
@@ -185,10 +185,10 @@ def test_a_mid_loop_failure_still_records_the_run_and_the_clips_that_landed(
     assert len(runs) == 1
     run = runs[0]
 
-    run_films = conn.execute(
-        "SELECT * FROM run_film WHERE run_id = ?", (run["id"],)
+    run_videos = conn.execute(
+        "SELECT * FROM run_video WHERE run_id = ?", (run["id"],)
     ).fetchall()
-    assert len(run_films) == 1
+    assert len(run_videos) == 1
 
     clips = conn.execute("SELECT * FROM clip").fetchall()
     assert len(clips) == 1

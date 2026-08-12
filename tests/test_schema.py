@@ -4,7 +4,7 @@ import pytest
 
 from cutlist.db.schema import SCHEMA_VERSION, connect, migrate
 
-TABLES = {"film", "run", "run_film", "clip", "segment", "clip_rating", "shot_rating"}
+TABLES = {"video", "run", "run_video", "clip", "segment", "clip_rating", "shot_rating"}
 
 
 def _names(conn, kind):
@@ -17,7 +17,7 @@ def _names(conn, kind):
 def test_connect_creates_every_table_and_the_view(tmp_path):
     conn = connect(tmp_path / "cutlist.sqlite")
     assert TABLES <= _names(conn, "table")
-    assert "clip_film" in _names(conn, "view")
+    assert "clip_video" in _names(conn, "view")
 
 
 def test_connect_stamps_the_schema_version(tmp_path):
@@ -63,13 +63,13 @@ def test_verdict_and_mark_values_are_constrained(tmp_path):
             (1, "amazing", "2026-08-09T00:00:00+00:00"),
         )
     conn.execute(
-        "INSERT INTO film (film_hash, display_name, first_seen_at, last_seen_at) "
+        "INSERT INTO video (video_hash, display_name, first_seen_at, last_seen_at) "
         "VALUES (?, ?, ?, ?)",
-        ("hash1", "film1", "2026-08-09T00:00:00+00:00", "2026-08-09T00:00:00+00:00"),
+        ("hash1", "video1", "2026-08-09T00:00:00+00:00", "2026-08-09T00:00:00+00:00"),
     )
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute(
-            "INSERT INTO shot_rating (film_hash, seg_start_s, seg_end_s, "
+            "INSERT INTO shot_rating (video_hash, seg_start_s, seg_end_s, "
             "shot_start_s, shot_end_s, mark, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
             ("hash1", 1.0, 2.0, 1.0, 2.0, "amazing", "2026-08-09T00:00:00+00:00"),
         )
@@ -78,9 +78,9 @@ def test_verdict_and_mark_values_are_constrained(tmp_path):
 def test_deleting_clip_cascades_to_segments_and_ratings(tmp_path):
     conn = connect(tmp_path / "cutlist.sqlite")
     conn.execute(
-        "INSERT INTO film (film_hash, display_name, first_seen_at, last_seen_at) "
+        "INSERT INTO video (video_hash, display_name, first_seen_at, last_seen_at) "
         "VALUES (?, ?, ?, ?)",
-        ("hash1", "film1", "2026-08-09T00:00:00+00:00", "2026-08-09T00:00:00+00:00"),
+        ("hash1", "video1", "2026-08-09T00:00:00+00:00", "2026-08-09T00:00:00+00:00"),
     )
     conn.execute(
         "INSERT INTO run (preset_name, preset_sha256, preset_json, caption_text, "
@@ -92,7 +92,7 @@ def test_deleting_clip_cascades_to_segments_and_ratings(tmp_path):
         (1, 1, "01.mp4", 10.0),
     )
     conn.execute(
-        "INSERT INTO segment (clip_id, position, film_hash, seg_start_s, seg_end_s, "
+        "INSERT INTO segment (clip_id, position, video_hash, seg_start_s, seg_end_s, "
         "shot_start_s, shot_end_s) VALUES (?, ?, ?, ?, ?, ?, ?)",
         (1, 1, "hash1", 1.0, 2.0, 1.0, 2.0),
     )
@@ -115,9 +115,9 @@ def test_deleting_clip_cascades_to_segments_and_ratings(tmp_path):
 def test_deleting_segment_sets_shot_rating_segment_id_to_null(tmp_path):
     conn = connect(tmp_path / "cutlist.sqlite")
     conn.execute(
-        "INSERT INTO film (film_hash, display_name, first_seen_at, last_seen_at) "
+        "INSERT INTO video (video_hash, display_name, first_seen_at, last_seen_at) "
         "VALUES (?, ?, ?, ?)",
-        ("hash1", "film1", "2026-08-09T00:00:00+00:00", "2026-08-09T00:00:00+00:00"),
+        ("hash1", "video1", "2026-08-09T00:00:00+00:00", "2026-08-09T00:00:00+00:00"),
     )
     conn.execute(
         "INSERT INTO run (preset_name, preset_sha256, preset_json, caption_text, "
@@ -129,13 +129,13 @@ def test_deleting_segment_sets_shot_rating_segment_id_to_null(tmp_path):
         (1, 1, "01.mp4", 10.0),
     )
     conn.execute(
-        "INSERT INTO segment (clip_id, position, film_hash, seg_start_s, seg_end_s, "
+        "INSERT INTO segment (clip_id, position, video_hash, seg_start_s, seg_end_s, "
         "shot_start_s, shot_end_s) VALUES (?, ?, ?, ?, ?, ?, ?)",
         (1, 1, "hash1", 1.0, 2.0, 1.0, 2.0),
     )
     # Insert shot_rating referencing the segment
     conn.execute(
-        "INSERT INTO shot_rating (film_hash, seg_start_s, seg_end_s, "
+        "INSERT INTO shot_rating (video_hash, seg_start_s, seg_end_s, "
         "shot_start_s, shot_end_s, mark, segment_id, created_at) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         ("hash1", 1.0, 2.0, 1.0, 2.0, "good", 1, "2026-08-09T00:00:00+00:00"),

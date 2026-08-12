@@ -15,7 +15,7 @@ FIXTURE_CUTS = [FIXTURE_SHOT_SECONDS * i for i in range(1, len(FIXTURE_HEX_COLOR
 
 
 @pytest.fixture(scope="session")
-def fixture_film(tmp_path_factory):
+def fixture_video(tmp_path_factory):
     """A 30s video of six flat colours, cutting every 5s.
 
     Session-scoped because encoding it takes a second or two and nothing
@@ -45,10 +45,10 @@ CUTFREE_DURATION = 3.0
 
 
 @pytest.fixture(scope="session")
-def cutfree_film(tmp_path_factory):
+def cutfree_video(tmp_path_factory):
     """A 3s single flat colour, deliberately with no cuts at all.
 
-    Session-scoped for the same reason as fixture_film -- nothing mutates it.
+    Session-scoped for the same reason as fixture_video -- nothing mutates it.
     """
     out = tmp_path_factory.mktemp("media") / "cutfree.mp4"
 

@@ -13,15 +13,15 @@ from cutlist.db import store
 from cutlist.db.schema import connect
 from cutlist.feedback.rate import parse_segment_marks
 from cutlist.media.caption import FontError, render_caption
-from cutlist.media.probe import probe as probe_film
+from cutlist.media.probe import probe as probe_video
 from cutlist.media.render import render_clip
 from cutlist.media.shots import detect_shots
-from cutlist.paths import Workspace, film_id
+from cutlist.paths import Workspace, video_id
 from cutlist.presets import PresetError, load_preset
 from cutlist.select.naive import NotEnoughFootage, draft_picks
 from cutlist.shell import ToolError
 
-app = typer.Typer(help="Assemble short captioned clips from a feature film.")
+app = typer.Typer(help="Assemble short captioned clips from a feature video.")
 
 # Known failure modes get one clean line on stderr; everything else keeps its
 # traceback. Deliberately an allowlist rather than bare ValueError/LookupError,
@@ -62,10 +62,10 @@ def _require(path: Path) -> None:
 
 @app.command()
 @handle_errors
-def probe(film: Path) -> None:
-    """Show what ffprobe makes of a film."""
-    _require(film)
-    info = probe_film(film)
+def probe(video: Path) -> None:
+    """Show what ffprobe makes of a video."""
+    _require(video)
+    info = probe_video(video)
 
     typer.echo(f"{info.width}x{info.height} @ {info.fps:g}fps")
     typer.echo(f"{info.duration:.2f}s, audio: {'yes' if info.has_audio else 'no'}")
@@ -74,12 +74,12 @@ def probe(film: Path) -> None:
 @app.command()
 @handle_errors
 def shots(
-    film: Path,
+    video: Path,
     as_json: bool = typer.Option(False, "--json", help="Emit the shot list as JSON."),
 ) -> None:
     """Detect cuts and report the shots between them."""
-    _require(film)
-    found = detect_shots(film)
+    _require(video)
+    found = detect_shots(video)
 
     if as_json:
         typer.echo(json.dumps(
@@ -124,11 +124,11 @@ def _open_run(
     Opened first so a run that dies partway still records which source it was
     pointed at and which preset it was going to use.
     """
-    info = probe_film(video)
-    film_hash = film_id(video)
-    store.record_film(
+    info = probe_video(video)
+    video_hash = video_id(video)
+    store.record_video(
         conn,
-        film_hash=film_hash,
+        video_hash=video_hash,
         display_name=video.name,
         duration_s=info.duration,
         fps=info.fps,
@@ -144,13 +144,13 @@ def _open_run(
         caption_text=spec.caption.text,
         seed=seed,
         cutlist_version=_cutlist_version(),
-        film_hashes=[film_hash],
+        video_hashes=[video_hash],
     )
-    return film_hash, run_id
+    return video_hash, run_id
 
 
 def _record_picks(
-    conn, *, run_id: int, ordinal: int, clip: Path, root: Path, picks, film_hash: str
+    conn, *, run_id: int, ordinal: int, clip: Path, root: Path, picks, video_hash: str
 ) -> None:
     """Record one rendered clip and the segments it was assembled from."""
     store.record_clip(
@@ -161,7 +161,7 @@ def _record_picks(
         duration_s=sum(pick.segment.duration for pick in picks),
         segments=[
             store.SegmentRecord(
-                film_hash=film_hash,
+                video_hash=video_hash,
                 seg_start_s=pick.segment.start,
                 seg_end_s=pick.segment.end,
                 shot_start_s=pick.shot.start,
@@ -187,7 +187,7 @@ def _draft_clips(
     typer.echo(f"{len(found)} shots")
 
     rng = random.Random(seed)
-    film_hash, run_id = _open_run(
+    video_hash, run_id = _open_run(
         conn, video=video, spec=spec, preset_path=preset_path, seed=seed
     )
 
@@ -196,7 +196,7 @@ def _draft_clips(
     # Rooted in the cache dir and scoped by a random token: two concurrent
     # drafts of the same video and preset must not share a scratch path.
     scratch_root = workspace.cache_for(video) / f"scratch_{uuid.uuid4().hex[:8]}"
-    # Keyed per run rather than per film: concurrent drafts of the same video
+    # Keyed per run rather than per video: concurrent drafts of the same video
     # with different captions or presets must not overwrite each other's PNG.
     caption_png = render_caption(spec.caption, spec.output, scratch_root / "caption.png")
 
@@ -219,7 +219,7 @@ def _draft_clips(
 
         _record_picks(
             conn, run_id=run_id, ordinal=ordinal, clip=clip,
-            root=workspace.root, picks=picks, film_hash=film_hash,
+            root=workspace.root, picks=picks, video_hash=video_hash,
         )
         length = sum(segment.duration for segment in segments)
         typer.echo(f"{clip.name}  {len(segments)} segments  {length:.1f}s")
@@ -232,7 +232,7 @@ def _draft_clips(
 @app.command()
 @handle_errors
 def draft(
-    film: Path,
+    video: Path,
     preset: Path = typer.Option(..., "--preset", help="Path to a preset YAML."),
     count: int = typer.Option(10, "--count", help="How many clips to produce."),
     caption: str | None = typer.Option(None, "--caption", help="Override the preset's text."),
@@ -240,7 +240,7 @@ def draft(
     seed: int | None = typer.Option(None, "--seed", help="Fix the RNG for reproducible drafts."),
 ) -> None:
     """Cut clips using random shot selection, with no scoring or judging."""
-    _require(film)
+    _require(video)
     _require(preset)
 
     spec = load_preset(preset)
@@ -256,7 +256,7 @@ def draft(
     workspace = Workspace(root=root)
     _draft_clips(
         connect(workspace.database),
-        video=film, spec=spec, workspace=workspace,
+        video=video, spec=spec, workspace=workspace,
         count=count, seed=seed, preset_path=preset,
     )
 
@@ -316,7 +316,7 @@ def ratings(
         return
 
     typer.echo(
-        f"{result['films']} films, {result['runs']} runs, "
+        f"{result['videos']} videos, {result['runs']} runs, "
         f"{result['clips']} clips, {result['segments']} segments"
     )
     verdicts = result["verdicts"] or {}
@@ -332,7 +332,7 @@ def ratings(
 @app.command()
 @handle_errors
 def review(
-    film: str | None = typer.Option(None, "--film", help="Filter by film hash."),
+    video: str | None = typer.Option(None, "--video", help="Filter by video hash."),
     preset: str | None = typer.Option(None, "--preset", help="Filter by preset name."),
     port: int = typer.Option(8731, "--port", help="Port to serve on."),
     all_clips: bool = typer.Option(False, "--all", help="Include clips already rated."),
@@ -346,7 +346,7 @@ def review(
 
     try:
         httpd = build_server(
-            root=root, port=port, film=film, preset=preset,
+            root=root, port=port, video=video, preset=preset,
             unrated_only=not all_clips,
         )
     except OSError as exc:

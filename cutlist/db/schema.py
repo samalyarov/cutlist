@@ -96,7 +96,46 @@ FROM segment
 GROUP BY clip_id, film_hash;
 """
 
-MIGRATIONS = [_V1]
+# The project's vocabulary is "video": not every source is a film, and the
+# narrower word invites assumptions about provenance the project does not want.
+#
+# Order matters. SQLite does not refuse a RENAME COLUMN that a view depends on
+# -- it silently rewrites the view's body to use the new name. Left in place,
+# clip_film would survive as a view still named clip_film whose internals said
+# video_hash. There is no ALTER VIEW, so it has to be dropped and recreated for
+# its new name regardless. Table and column renames do propagate correctly into
+# dependent REFERENCES clauses, so the foreign-key graph needs no manual repair.
+_V2 = """
+DROP VIEW IF EXISTS clip_film;
+
+ALTER TABLE film RENAME TO video;
+ALTER TABLE run_film RENAME TO run_video;
+
+ALTER TABLE video RENAME COLUMN film_hash TO video_hash;
+ALTER TABLE run_video RENAME COLUMN film_hash TO video_hash;
+ALTER TABLE segment RENAME COLUMN film_hash TO video_hash;
+ALTER TABLE shot_rating RENAME COLUMN film_hash TO video_hash;
+
+DROP INDEX IF EXISTS idx_segment_film;
+CREATE INDEX IF NOT EXISTS idx_segment_video ON segment (video_hash);
+
+CREATE VIEW IF NOT EXISTS clip_video AS
+SELECT clip_id, video_hash, COUNT(*) AS segment_count
+FROM segment
+GROUP BY clip_id, video_hash;
+
+-- Thumbnails captured at draft time, so a segment mark stays legible after the
+-- source video is deleted. A separate table rather than a column on segment:
+-- mark_shot and segment_by_id both SELECT *, and a BLOB there would drag image
+-- bytes through every mark written.
+CREATE TABLE IF NOT EXISTS segment_thumbnail (
+    segment_id  INTEGER PRIMARY KEY REFERENCES segment(id) ON DELETE CASCADE,
+    image       BLOB NOT NULL,
+    captured_at TEXT NOT NULL
+);
+"""
+
+MIGRATIONS = [_V1, _V2]
 
 # Derived, never hand-written: a constant that has to be bumped alongside the
 # list is a constant that will eventually disagree with it.

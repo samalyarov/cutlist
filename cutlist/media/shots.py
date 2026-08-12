@@ -21,7 +21,7 @@ def detect_shots(
     threshold: float = 27.0,
     min_shot_seconds: float = 0.4,
 ) -> list[Shot]:
-    """Split a film into uninterrupted takes.
+    """Split a video into uninterrupted takes.
 
     min_shot_seconds suppresses the sub-frame detections that camera flashes
     and fast motion produce — measuring the reference clips turned up several

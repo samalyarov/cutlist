@@ -28,7 +28,7 @@ command. Run the tests with:
 cutlist probe <video>
 cutlist shots <video> [--json]
 cutlist draft <video> --preset <preset.yaml> [--count N] [--caption "..."] [--root DIR] [--seed N]
-cutlist review [--film HASH] [--preset NAME] [--port N] [--all]
+cutlist review [--video HASH] [--preset NAME] [--port N] [--all]
 cutlist rate <clip-path> <fire|ok|no> [--segments "1:good,3:veto"]
 cutlist ratings [--json]
 ```

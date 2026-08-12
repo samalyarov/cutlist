@@ -11,10 +11,10 @@ def conn(tmp_path):
 
 @pytest.fixture
 def clip_id(conn):
-    store.record_film(conn, film_hash="abc", display_name="fixture.mp4", duration_s=30.0)
+    store.record_video(conn, video_hash="abc", display_name="fixture.mp4", duration_s=30.0)
     run_id = store.start_run(
         conn, preset_name="sample_preset", preset_sha256="sha", preset_json="{}",
-        caption_text="TOMORROW", seed=7, cutlist_version="0.1.0", film_hashes=["abc"],
+        caption_text="TOMORROW", seed=7, cutlist_version="0.1.0", video_hashes=["abc"],
     )
     return store.record_clip(
         conn, run_id=run_id, ordinal=1, path="output/01.mp4", duration_s=6.0,
@@ -58,7 +58,7 @@ def test_mark_shot_copies_the_spans_off_the_segment(conn, clip_id):
     row = conn.execute("SELECT * FROM shot_rating").fetchone()
     assert (row["seg_start_s"], row["seg_end_s"]) == (1.0, 3.0)
     assert (row["shot_start_s"], row["shot_end_s"]) == (0.5, 3.5)
-    assert row["film_hash"] == "abc"
+    assert row["video_hash"] == "abc"
 
 
 def test_a_shot_mark_survives_deletion_of_its_clip(conn, clip_id):

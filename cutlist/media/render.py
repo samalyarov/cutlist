@@ -8,7 +8,7 @@ from cutlist.shell import run
 
 @dataclass(frozen=True)
 class Segment:
-    """A slice of the source film, in source timecodes."""
+    """A slice of the source video, in source timecodes."""
 
     start: float
     duration: float
@@ -19,7 +19,7 @@ class Segment:
 
 
 def encode_segment(
-    film: Path,
+    video: Path,
     segment: Segment,
     caption_png: Path,
     output: OutputSpec,
@@ -43,7 +43,7 @@ def encode_segment(
     run([
         "ffmpeg", "-y", "-v", "error",
         "-ss", f"{segment.start:.3f}",
-        "-i", str(film),
+        "-i", str(video),
         "-i", str(caption_png),
         "-t", f"{segment.duration:.3f}",
         "-an",
@@ -59,7 +59,7 @@ def _concat_line(part: Path) -> str:
 
     The demuxer parses each path like a single-quoted shell token, so a
     literal `'` in the path has to close the quote, escape one, and reopen
-    it -- otherwise any film with an apostrophe in its name breaks the list.
+    it -- otherwise any video with an apostrophe in its name breaks the list.
     """
     escaped = part.resolve().as_posix().replace("'", "'\\''")
     return f"file '{escaped}'"
@@ -97,7 +97,7 @@ def concat(parts: list[Path], dest: Path) -> Path:
 
 
 def render_clip(
-    film: Path,
+    video: Path,
     segments: list[Segment],
     caption_png: Path,
     output: OutputSpec,
@@ -108,7 +108,7 @@ def render_clip(
     try:
         parts = [
             encode_segment(
-                film, segment, caption_png, output, scratch / f"seg_{i:02d}.mp4"
+                video, segment, caption_png, output, scratch / f"seg_{i:02d}.mp4"
             )
             for i, segment in enumerate(segments)
         ]

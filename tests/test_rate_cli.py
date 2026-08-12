@@ -12,10 +12,10 @@ runner = CliRunner()
 @pytest.fixture
 def workspace(tmp_path):
     conn = connect(tmp_path / "cutlist.sqlite")
-    store.record_film(conn, film_hash="abc", display_name="fixture.mp4", duration_s=30.0)
+    store.record_video(conn, video_hash="abc", display_name="fixture.mp4", duration_s=30.0)
     run_id = store.start_run(
         conn, preset_name="p", preset_sha256="sha", preset_json="{}",
-        caption_text="TEST", seed=1, cutlist_version="0.1.0", film_hashes=["abc"],
+        caption_text="TEST", seed=1, cutlist_version="0.1.0", video_hashes=["abc"],
     )
     store.record_clip(
         conn, run_id=run_id, ordinal=1, path="output/01.mp4", duration_s=4.0,

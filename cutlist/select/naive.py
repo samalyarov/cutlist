@@ -7,7 +7,7 @@ from cutlist.presets import RhythmSpec
 
 
 class NotEnoughFootage(RuntimeError):
-    """The film has too few usable shots to fill an assembly."""
+    """The video has too few usable shots to fill an assembly."""
 
 
 # A single random count-and-sample can land on a pool that happens to have no

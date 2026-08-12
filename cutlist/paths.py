@@ -6,11 +6,11 @@ from pathlib import Path
 CHUNK = 1 << 20
 
 
-def film_id(path: Path) -> str:
-    """Identify a film by size plus its first and last megabyte.
+def video_id(path: Path) -> str:
+    """Identify a video by size plus its first and last megabyte.
 
     Hashing the whole file would mean reading gigabytes just to look something
-    up in the cache. Size plus both ends is enough to tell films apart while
+    up in the cache. Size plus both ends is enough to tell videos apart while
     staying stable when the file is renamed or moved.
     """
     size = path.stat().st_size
@@ -52,21 +52,21 @@ class Workspace:
     def output(self) -> Path:
         return self.root / "output"
 
-    def cache_for(self, film: Path) -> Path:
-        path = self.cache / f"{film.stem}__{film_id(film)}"
+    def cache_for(self, video: Path) -> Path:
+        path = self.cache / f"{video.stem}__{video_id(video)}"
         path.mkdir(parents=True, exist_ok=True)
         return path
 
-    def output_for(self, film: Path, preset_name: str, run_id: int) -> Path:
+    def output_for(self, video: Path, preset_name: str, run_id: int) -> Path:
         """Where one run's clips are written.
 
         Scoped by run_id because clips are named by ordinal (`01.mp4`, ...):
-        without it, re-drafting the same film and preset would overwrite an
+        without it, re-drafting the same video and preset would overwrite an
         earlier run's files while its `clip` rows still claimed those paths,
         attaching ratings to footage no longer in the file. One directory per
         run makes a clip path name exactly one assembly.
         """
-        path = self.output / film.stem / preset_name / str(run_id)
+        path = self.output / video.stem / preset_name / str(run_id)
         path.mkdir(parents=True, exist_ok=True)
         return path
 
@@ -75,7 +75,7 @@ class Workspace:
         """The ratings store.
 
         Deliberately at the workspace root rather than under cache/: taste
-        generalises across films, and the cache is regenerable. Deleting it
+        generalises across videos, and the cache is regenerable. Deleting it
         must not destroy a month of judgements.
         """
         return self.root / "cutlist.sqlite"

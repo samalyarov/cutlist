@@ -12,18 +12,18 @@ from cutlist.review.server import build_server
 
 
 @pytest.fixture
-def workspace(tmp_path, fixture_film):
+def workspace(tmp_path, fixture_video):
     import shutil
 
     clip_dir = tmp_path / "output" / "fixture" / "p"
     clip_dir.mkdir(parents=True)
-    shutil.copy(fixture_film, clip_dir / "01.mp4")
+    shutil.copy(fixture_video, clip_dir / "01.mp4")
 
     conn = connect(tmp_path / "cutlist.sqlite")
-    store.record_film(conn, film_hash="abc", display_name="fixture.mp4", duration_s=30.0)
+    store.record_video(conn, video_hash="abc", display_name="fixture.mp4", duration_s=30.0)
     run_id = store.start_run(
         conn, preset_name="p", preset_sha256="sha", preset_json="{}",
-        caption_text="TEST", seed=1, cutlist_version="0.1.0", film_hashes=["abc"],
+        caption_text="TEST", seed=1, cutlist_version="0.1.0", video_hashes=["abc"],
     )
     store.record_clip(
         conn, run_id=run_id, ordinal=1,
@@ -34,9 +34,9 @@ def workspace(tmp_path, fixture_film):
         ],
     )
     # The source has to be findable for thumbnails; review resolves it from
-    # the film's display_name under the workspace input directory.
+    # the video's display_name under the workspace input directory.
     (tmp_path / "input").mkdir()
-    shutil.copy(fixture_film, tmp_path / "input" / "fixture.mp4")
+    shutil.copy(fixture_video, tmp_path / "input" / "fixture.mp4")
     return tmp_path
 
 
@@ -287,7 +287,7 @@ def test_media_clip_refuses_a_path_that_escapes_the_workspace(server, workspace,
     conn = connect(workspace / "cutlist.sqlite")
     run_id = store.start_run(
         conn, preset_name="p", preset_sha256="sha", preset_json="{}",
-        caption_text="TEST", seed=1, cutlist_version="0.1.0", film_hashes=["abc"],
+        caption_text="TEST", seed=1, cutlist_version="0.1.0", video_hashes=["abc"],
     )
 
     # Relative traversal: "../escape-relative.mp4", resolved against root,

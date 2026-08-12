@@ -62,13 +62,13 @@ class ReviewHandler(BaseHTTPRequestHandler):
     def _send_error(self, status: int, message: str) -> None:
         self._send_json({"ok": False, "error": message}, status=status)
 
-    def _source_for(self, film_hash: str, conn) -> Path | None:
+    def _source_for(self, video_hash: str, conn) -> Path | None:
         """Locate the original video a segment was cut from.
 
         The database records a display name, not a path, because the file can
         move. Look for it where the workspace keeps sources.
         """
-        name = store.film_display_name(conn, film_hash)
+        name = store.video_display_name(conn, video_hash)
         if name is None:
             return None
         candidate = self.config["root"] / "input" / name
@@ -161,7 +161,7 @@ class ReviewHandler(BaseHTTPRequestHandler):
             conn = self._db()
             self._send_json(store.clips_for_review(
                 conn,
-                film=self.config["film"],
+                video=self.config["video"],
                 preset=self.config["preset"],
                 unrated_only=self.config["unrated_only"],
             ))
@@ -203,7 +203,7 @@ class ReviewHandler(BaseHTTPRequestHandler):
             self._send_error(404, "no such segment")
             return
 
-        source = self._source_for(segment["film_hash"], conn)
+        source = self._source_for(segment["video_hash"], conn)
         if source is None:
             self._send_error(404, "source video not found")
             return
@@ -275,7 +275,7 @@ def build_server(
     *,
     root: Path,
     port: int,
-    film: str | None = None,
+    video: str | None = None,
     preset: str | None = None,
     unrated_only: bool = True,
 ) -> ThreadingHTTPServer:
@@ -287,7 +287,7 @@ def build_server(
     httpd = ThreadingHTTPServer(("127.0.0.1", port), ReviewHandler)
     httpd.cutlist = {  # type: ignore[attr-defined]
         "root": Path(root),
-        "film": film,
+        "video": video,
         "preset": preset,
         "unrated_only": unrated_only,
     }
