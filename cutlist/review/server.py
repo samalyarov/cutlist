@@ -286,6 +286,7 @@ def build_server(
     *,
     root: Path,
     port: int,
+    host: str = "127.0.0.1",
     video: str | None = None,
     preset: str | None = None,
     unrated_only: bool = True,
@@ -294,8 +295,13 @@ def build_server(
 
     Returned unstarted so tests can run it on an ephemeral port in a thread
     and the CLI can print the URL before blocking on serve_forever().
+
+    `host` defaults to loopback. Binding anything else exposes an
+    unauthenticated server that reads files from the workspace; it exists
+    because a container's loopback is not the host's, so a published port
+    would otherwise reach nothing.
     """
-    httpd = ThreadingHTTPServer(("127.0.0.1", port), ReviewHandler)
+    httpd = ThreadingHTTPServer((host, port), ReviewHandler)
     httpd.cutlist = {  # type: ignore[attr-defined]
         "root": Path(root),
         "video": video,

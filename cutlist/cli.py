@@ -359,6 +359,11 @@ def review(
     video: str | None = typer.Option(None, "--video", help="Filter by video hash."),
     preset: str | None = typer.Option(None, "--preset", help="Filter by preset name."),
     port: int = typer.Option(8731, "--port", help="Port to serve on."),
+    host: str = typer.Option(
+        "127.0.0.1", "--host",
+        help="Interface to bind. Use 0.0.0.0 in a container; this exposes an "
+             "unauthenticated server to your network.",
+    ),
     all_clips: bool = typer.Option(False, "--all", help="Include clips already rated."),
     open_browser: bool = typer.Option(True, "--open/--no-open", help="Open a browser."),
     root: Path = typer.Option(Path("."), "--root", help="Workspace root."),
@@ -370,7 +375,7 @@ def review(
 
     try:
         httpd = build_server(
-            root=root, port=port, video=video, preset=preset,
+            root=root, port=port, host=host, video=video, preset=preset,
             unrated_only=not all_clips,
         )
     except OSError as exc:
@@ -379,7 +384,10 @@ def review(
         typer.echo(f"error: cannot bind port {port}: {exc}", err=True)
         raise typer.Exit(code=1) from None
 
-    url = f"http://127.0.0.1:{httpd.server_address[1]}"
+    # A browser cannot usefully open http://0.0.0.0; loopback is what a
+    # container's published port actually resolves to on the host.
+    shown = "127.0.0.1" if host in ("0.0.0.0", "::") else host
+    url = f"http://{shown}:{httpd.server_address[1]}"
     typer.echo(f"review at {url}  (ctrl-c to stop)")
     if open_browser:
         webbrowser.open(url)

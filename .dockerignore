@@ -1,0 +1,16 @@
+.git
+.github
+.venv
+.pytest_cache
+.ruff_cache
+.superpowers
+docs
+tests
+input
+output
+cache
+work
+references
+*.sqlite*
+*.egg-info
+__pycache__
