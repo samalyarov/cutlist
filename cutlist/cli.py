@@ -220,6 +220,16 @@ def _draft_clips(
                 video, segments, caption_png, spec.output, clip,
                 scratch_root / f"{ordinal:02d}",
             )
+            # Capturing thumbnails can fail the same way rendering can (ffmpeg
+            # on a bad seek, a source that vanished mid-run), and a clip on
+            # disk with no database row is exactly the state this release
+            # exists to prevent. Kept inside the same boundary as the render
+            # so a capture failure is reported and aborted identically, not
+            # swallowed or left to record a clip missing its thumbnails.
+            _record_picks(
+                conn, run_id=run_id, ordinal=ordinal, clip=clip,
+                root=workspace.root, picks=picks, video_hash=video_hash, video=video,
+            )
         except (NotEnoughFootage, ToolError) as exc:
             typer.echo(
                 f"wrote {written} of {count} clips; failed on {ordinal:02d}: {exc}",
@@ -227,10 +237,6 @@ def _draft_clips(
             )
             raise typer.Exit(code=1) from None
 
-        _record_picks(
-            conn, run_id=run_id, ordinal=ordinal, clip=clip,
-            root=workspace.root, picks=picks, video_hash=video_hash, video=video,
-        )
         length = sum(segment.duration for segment in segments)
         typer.echo(f"{clip.name}  {len(segments)} segments  {length:.1f}s")
         written += 1

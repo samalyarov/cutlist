@@ -198,3 +198,69 @@ def test_a_mid_loop_failure_still_records_the_run_and_the_clips_that_landed(
         "SELECT * FROM segment WHERE clip_id = ?", (clip["id"],)
     ).fetchall()
     assert segments
+
+
+def test_a_thumbnail_capture_failure_reports_the_ordinal_and_keeps_earlier_clips(
+    fixture_video, tmp_path, monkeypatch
+):
+    """Capture sits inside the same failure boundary as the render now.
+
+    Before, a ToolError from thumbnail_bytes escaped past the loop's
+    try/except entirely (it was raised while building _record_picks' call,
+    which sat outside the block) and was only caught by the outer
+    @handle_errors boundary -- a bare "error: ..." with no ordinal and no
+    partial-progress count. It never actually left a clip recorded without
+    its thumbnails, because record_clip is only called once every thumbnail
+    in a clip has already been captured successfully; what was missing was
+    the same clear reporting a render failure already gets.
+    """
+    # segments.min == segments.max fixes the segment count per clip at 2,
+    # regardless of the RNG draw, so "the Nth call to thumbnail_bytes" maps
+    # to a known clip deterministically: calls 1-2 are the first clip's
+    # thumbnails, call 3 is the second clip's first.
+    preset_file = tmp_path / "fixed_segments.yaml"
+    preset_file.write_text(
+        """
+name: test_preset
+caption:
+  text: "TEST"
+rhythm:
+  segments: {min: 2, max: 2}
+  seg_duration: {min: 1.0, target: 1.5, max: 2.0}
+  total: {min: 3.0, max: 6.0}
+output:
+  width: 160
+  height: 120
+  fps: 25
+  crf: 30
+""",
+        encoding="utf-8",
+    )
+
+    original = cli.thumbnail_bytes
+    calls = {"n": 0}
+
+    def flaky(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] > 2:
+            raise ToolError("ffmpeg blew up")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(cli, "thumbnail_bytes", flaky)
+
+    result = _draft(fixture_video, preset_file, tmp_path, extra=["--count", "3"])
+
+    assert result.exit_code != 0
+    assert "wrote 1 of 3 clips; failed on 02: ffmpeg blew up" in result.output
+
+    conn = connect(tmp_path / "cutlist.sqlite")
+    clips = conn.execute("SELECT * FROM clip").fetchall()
+    assert len(clips) == 1
+    assert clips[0]["ordinal"] == 1
+
+    segments = conn.execute(
+        "SELECT * FROM segment WHERE clip_id = ?", (clips[0]["id"],)
+    ).fetchall()
+    assert len(segments) == 2
+    for segment in segments:
+        assert store.segment_thumbnail(conn, segment["id"]) is not None
