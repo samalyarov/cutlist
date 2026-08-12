@@ -16,6 +16,7 @@ from cutlist.media.caption import FontError, render_caption
 from cutlist.media.probe import probe as probe_video
 from cutlist.media.render import render_clip
 from cutlist.media.shots import detect_shots
+from cutlist.media.thumbs import thumbnail_bytes
 from cutlist.paths import Workspace, video_id
 from cutlist.presets import PresetError, load_preset
 from cutlist.select.naive import NotEnoughFootage, draft_picks
@@ -150,9 +151,15 @@ def _open_run(
 
 
 def _record_picks(
-    conn, *, run_id: int, ordinal: int, clip: Path, root: Path, picks, video_hash: str
+    conn, *, run_id: int, ordinal: int, clip: Path, root: Path,
+    picks, video_hash: str, video: Path,
 ) -> None:
-    """Record one rendered clip and the segments it was assembled from."""
+    """Record one rendered clip, the segments it was made of, and their frames.
+
+    Thumbnails are captured now rather than on demand because they have to
+    outlive the source video: once it is deleted, a frame from it cannot be
+    recovered, and a segment mark with no picture is a judgement about nothing.
+    """
     store.record_clip(
         conn,
         run_id=run_id,
@@ -167,6 +174,9 @@ def _record_picks(
                 shot_start_s=pick.shot.start,
                 shot_end_s=pick.shot.end,
                 shot_index=pick.shot.index,
+                thumbnail=thumbnail_bytes(
+                    video, (pick.segment.start + pick.segment.end) / 2
+                ),
             )
             for pick in picks
         ],
@@ -219,7 +229,7 @@ def _draft_clips(
 
         _record_picks(
             conn, run_id=run_id, ordinal=ordinal, clip=clip,
-            root=workspace.root, picks=picks, video_hash=video_hash,
+            root=workspace.root, picks=picks, video_hash=video_hash, video=video,
         )
         length = sum(segment.duration for segment in segments)
         typer.echo(f"{clip.name}  {len(segments)} segments  {length:.1f}s")

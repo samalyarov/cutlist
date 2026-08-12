@@ -6,7 +6,7 @@ from pathlib import Path
 from cutlist.db import store
 from cutlist.db.schema import connect
 from cutlist.media.sources import find_source
-from cutlist.media.thumbs import thumbnail
+from cutlist.media.thumbs import thumbnail_bytes
 from cutlist.paths import resolve_within
 
 PAGE = Path(__file__).with_name("page.html")
@@ -183,20 +183,28 @@ class ReviewHandler(BaseHTTPRequestHandler):
 
     def _serve_thumb(self, segment_id: int) -> None:
         conn = self._db()
-        segment = store.segment_by_id(conn, segment_id)
-        if segment is None:
-            self._send_error(404, "no such segment")
-            return
+        image = store.segment_thumbnail(conn, segment_id)
 
-        source = self._source_for(segment["video_hash"], conn)
-        if source is None:
-            self._send_error(404, "source video not found")
-            return
+        if image is None:
+            # Recorded before thumbnails were captured at draft time. Generate
+            # from the source and keep it, so the fallback is paid once.
+            segment = store.segment_by_id(conn, segment_id)
+            if segment is None:
+                self._send_error(404, "no such segment")
+                return
+            source = self._source_for(segment["video_hash"], conn)
+            if source is None:
+                self._send_error(404, "source video not found")
+                return
+            midpoint = (segment["seg_start_s"] + segment["seg_end_s"]) / 2
+            image = thumbnail_bytes(source, midpoint)
+            store.record_thumbnail(conn, segment_id=segment_id, image=image)
 
-        cache = self.config["root"] / "cache" / "thumbs"
-        midpoint = (segment["seg_start_s"] + segment["seg_end_s"]) / 2
-        dest = thumbnail(source, midpoint, cache / f"segment_{segment_id}.jpg")
-        self._send_file(dest, "image/jpeg")
+        self.send_response(200)
+        self.send_header("Content-Type", "image/jpeg")
+        self.send_header("Content-Length", str(len(image)))
+        self.end_headers()
+        self.wfile.write(image)
 
     def do_POST(self) -> None:  # noqa: N802 - name fixed by BaseHTTPRequestHandler
         if self.path.split("?", 1)[0] != "/api/ratings":

@@ -14,6 +14,10 @@ class SegmentRecord:
     Both spans are kept because they are different claims: the segment is
     what was on screen and judged, the shot is the take it belongs to. Neither
     can be recovered from the other after the fact.
+
+    The thumbnail is captured at draft time, from the source video, so a mark
+    stays legible after the source is gone -- a frame from a deleted file
+    cannot be recovered by any later change.
     """
 
     video_hash: str
@@ -22,6 +26,7 @@ class SegmentRecord:
     shot_start_s: float
     shot_end_s: float
     shot_index: int | None = None
+    thumbnail: bytes | None = None
 
 
 def record_video(
@@ -98,6 +103,7 @@ def record_clip(
     segments: list[SegmentRecord],
 ) -> int:
     """Record one rendered clip and everything it was assembled from."""
+    now = _now()
     with conn:
         cursor = conn.execute(
             "INSERT INTO clip (run_id, ordinal, path, duration_s) VALUES (?, ?, ?, ?)",
@@ -115,6 +121,22 @@ def record_clip(
                  s.shot_start_s, s.shot_end_s, s.shot_index)
                 for position, s in enumerate(segments)
             ],
+        )
+        images = [
+            (row["id"], segment.thumbnail, now)
+            for row, segment in zip(
+                conn.execute(
+                    "SELECT id FROM segment WHERE clip_id = ? ORDER BY position",
+                    (clip_id,),
+                ).fetchall(),
+                segments,
+            )
+            if segment.thumbnail is not None
+        ]
+        conn.executemany(
+            "INSERT INTO segment_thumbnail (segment_id, image, captured_at) "
+            "VALUES (?, ?, ?)",
+            images,
         )
     return clip_id
 
@@ -272,6 +294,28 @@ def clip_path(conn: sqlite3.Connection, clip_id: int) -> str | None:
 
 def segment_by_id(conn: sqlite3.Connection, segment_id: int) -> sqlite3.Row | None:
     return conn.execute("SELECT * FROM segment WHERE id = ?", (segment_id,)).fetchone()
+
+
+def record_thumbnail(conn: sqlite3.Connection, *, segment_id: int, image: bytes) -> None:
+    """Store a segment's thumbnail, replacing any already held.
+
+    Used by the review server to persist a thumbnail generated on the fallback
+    path, so a segment recorded before thumbnails existed pays for it once.
+    """
+    with conn:
+        conn.execute(
+            "INSERT INTO segment_thumbnail (segment_id, image, captured_at) "
+            "VALUES (?, ?, ?) ON CONFLICT (segment_id) DO UPDATE SET "
+            "image = excluded.image, captured_at = excluded.captured_at",
+            (segment_id, image, _now()),
+        )
+
+
+def segment_thumbnail(conn: sqlite3.Connection, segment_id: int) -> bytes | None:
+    row = conn.execute(
+        "SELECT image FROM segment_thumbnail WHERE segment_id = ?", (segment_id,)
+    ).fetchone()
+    return None if row is None else row["image"]
 
 
 def video_display_name(conn: sqlite3.Connection, video_hash: str) -> str | None:
