@@ -386,7 +386,7 @@ def review(
 
     # A browser cannot usefully open http://0.0.0.0; loopback is what a
     # container's published port actually resolves to on the host.
-    shown = "127.0.0.1" if host in ("0.0.0.0", "::") else host
+    shown = "127.0.0.1" if host == "0.0.0.0" else host
     url = f"http://{shown}:{httpd.server_address[1]}"
     typer.echo(f"review at {url}  (ctrl-c to stop)")
     if open_browser:
