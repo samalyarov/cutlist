@@ -1,9 +1,22 @@
 # cutlist
 
+[![ci](https://github.com/samalyarov/cutlist/actions/workflows/ci.yml/badge.svg)](https://github.com/samalyarov/cutlist/actions/workflows/ci.yml)
+
 Point it at a feature video and it produces short captioned clips: silent
 854x480 MP4s, 9-15 seconds each, assembled from segments cut out of
 different parts of the video, with a caption burned into the video. Originally built
 for Telegram, where "GIFs" are really silent MP4s.
+
+## Start here
+
+```
+cutlist demo
+cutlist review
+```
+
+`demo` synthesises a source video, cuts three clips from it, and leaves them
+ready to rate. No input file, no download. cutlist ships no video and never
+will — you supply your own source, and nothing is redistributed.
 
 ## Install
 
@@ -25,25 +38,29 @@ command. Run the tests with:
 ## Commands
 
 ```
+cutlist demo [--count N] [--root DIR] [--seed N]
 cutlist probe <video>
 cutlist shots <video> [--json]
 cutlist draft <video> --preset <preset.yaml> [--count N] [--caption "..."] [--root DIR] [--seed N]
-cutlist review [--video HASH] [--preset NAME] [--port N] [--all]
+cutlist review [--video HASH] [--preset NAME] [--port N] [--host ADDR] [--all] [--no-open]
 cutlist rate <clip-path> <fire|ok|no> [--segments "1:good,3:veto"]
+cutlist rerender <clip-path>
 cutlist ratings [--json]
 ```
+
+`demo` needs no input file -- see [Start here](#start-here) above.
 
 `probe` reports what ffprobe makes of the file: dimensions, fps, duration,
 whether it has audio.
 
 `shots` runs scene detection and reports the cuts found.
 
-`draft` is the one that produces output. It detects shots, picks segments
-according to the preset's rhythm rules, and renders `--count` clips (10 by
-default) to `output/<video>/<preset>/<run-id>/`. Each draft gets its own
-run directory, so re-drafting the same video and preset never overwrites an
-earlier run's clips -- the ratings recorded against them stay attached to
-the footage they were made about. Example:
+`draft` is the one that produces output from a video of your own. It detects
+shots, picks segments according to the preset's rhythm rules, and renders
+`--count` clips (10 by default) to `output/<video>/<preset>/<run-id>/`. Each
+draft gets its own run directory, so re-drafting the same video and preset
+never overwrites an earlier run's clips -- the ratings recorded against them
+stay attached to the footage they were made about. Example:
 
 ```
 cutlist draft "input/my-video.mp4" \
@@ -55,6 +72,35 @@ cutlist draft "input/my-video.mp4" \
 `--seed` fixes the RNG for a reproducible draft. `--root` sets where
 `input/`, `cache/`, `work/` and `output/` live (defaults to the current
 directory).
+
+`review`, `rate`, `ratings` and `rerender` are covered below, under
+[Rating](#rating).
+
+## How it works
+
+```
+video ──> probe ────> dimensions, fps, duration
+      └─> detect ───> shots (cuts found by content delta)
+                        │
+                        ▼
+                     select ──> segments, subject to the preset's rhythm
+                        │
+                        ▼
+                     render ──> one encode pass per segment, caption burnt in
+                        │        then a stream copy concat
+                        ▼
+                      clip ────> output/<video>/<preset>/<run-id>/NN.mp4
+                        │
+                        ▼
+                   cutlist.sqlite
+                        │
+     run, seed, resolved preset, every segment's timecodes and its parent
+     shot's, a thumbnail per segment, and every verdict and mark
+```
+
+The database is the master; the files are a cache. Everything except the
+ratings can be regenerated -- `cutlist rerender` rebuilds a deleted clip from
+its record, so cleaning up `output/` costs nothing.
 
 ## Presets
 
@@ -104,8 +150,42 @@ segments, `z` to undo, `?` for the full list. It opens a browser unless you
 pass `--no-open`, and refuses a port that is already taken. `cutlist rate`
 does the same from the terminal.
 
-Nothing consumes the ratings yet. This release collects them; scoring uses
-them later.
+Thumbnails are captured into the database as each clip is drafted, not
+generated on demand -- a segment mark has to stay legible after the source
+video is deleted, and a frame from a deleted file cannot be recovered.
+
+A clip whose file you have deleted shows as *missing* in the review queue and
+refuses a verdict: rating a clip you cannot watch would put a corrupt row in
+the one table that cannot be regenerated. Its segment marks still work, since
+those describe footage in the source. `cutlist rerender <clip-path>` rebuilds
+it from the recorded segments and preset, writing back to the same path so the
+ratings it already carries still describe it.
+
+Nothing consumes the ratings yet. This release collects them; scoring uses them
+later.
+
+## Docker
+
+```
+docker build -t cutlist .
+docker run --rm -v "$PWD:/work" cutlist demo
+docker run --rm -v "$PWD:/work" -p 8731:8731 cutlist review --host 0.0.0.0 --no-open
+```
+
+The workspace is mounted at `/work`, so `input/`, `output/` and
+`cutlist.sqlite` are the ones on your host.
+
+`--host 0.0.0.0` is required inside a container -- the default binds the
+container's own loopback, which a published port cannot reach. It exposes an
+unauthenticated server that reads files from the workspace to your local
+network; the server refuses paths outside the workspace, but it authenticates
+nobody.
+
+**On Windows, run natively rather than in Docker.** SQLite's file locking is
+unreliable over Docker Desktop's bind mounts, and the failure mode is a
+corrupted ratings database -- the one artifact with no backup. If you need
+Docker on Windows anyway, keep the database in a named volume rather than a
+bind mount.
 
 ## Current state
 
@@ -114,6 +194,10 @@ constraints in the preset -- it does not look at the footage at all. This
 is a deliberate walking skeleton: it proves out shot detection, captioning
 and rendering end to end before content-aware scoring (saliency, diversity,
 an agent doing the judging) is layered on top in a later phase.
+
+Local embedding models for content-aware scoring would need a much heavier
+image with GPU support; that is a later phase and deliberately not in this
+one.
 
 There is deliberately no single `run` command. The design this is heading
 toward involves an agent judging shortlisted footage between two separate
