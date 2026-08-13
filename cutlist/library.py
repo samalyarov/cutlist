@@ -25,8 +25,17 @@ def _timecode(seconds: float) -> str:
 
 def library_path(workspace, video: Path, start_s: float, duration_s: float) -> Path:
     """Timecode-first, not id-first: the point of a browsable directory is
-    finding footage by eye, and a timecode says where a clip came from."""
-    directory = workspace.library / video.stem
+    finding footage by eye, and a timecode says where a clip came from.
+
+    The directory folds in the source's content hash, exactly as
+    `Workspace.cache_for` already does -- two videos that happen to share a
+    filename (`projA/clip.mp4`, `projB/clip.mp4`) get distinct directories
+    instead of one silently overwriting the other's masters on disk while
+    the database still points at both as if they survived. The stem stays
+    the leading part of the name so the directory is still browsable by eye;
+    the hash only disambiguates it.
+    """
+    directory = workspace.library / f"{video.stem}__{video_id(video)}"
     return directory / f"{_timecode(start_s)}__{duration_s:.2f}s.mp4"
 
 
@@ -55,6 +64,7 @@ def extract_all(
     video: Path,
     workspace,
     crf: int = 18,
+    shots: list[Shot] | None = None,
     on_progress: Callable[[int, int, Shot, str], None] | None = None,
 ) -> tuple[int, int]:
     """Extract every shot of `video` into the library, skipping what is
@@ -68,6 +78,11 @@ def extract_all(
     that both exist mean the work is already done; anything else re-encodes,
     trusting the row (via `record_library_clip`'s own conflict handling) to
     settle on the id that was already assigned.
+
+    `shots`, when given, is used as-is instead of running `detect_shots`
+    again. Scene detection decodes the whole video, so a caller that already
+    has the list (to print a count or an estimate before starting) should
+    not pay for it twice.
 
     `on_progress`, when given, is called once per shot as
     `on_progress(index, total, shot, status)` with `index` 1-based and
@@ -85,7 +100,8 @@ def extract_all(
         height=info.height,
     )
 
-    shots = detect_shots(video)
+    if shots is None:
+        shots = detect_shots(video)
     added = skipped = 0
     total = len(shots)
 
@@ -132,4 +148,8 @@ def estimate(video: Path, shots: list[Shot]) -> str:
     bitrate = video.stat().st_size / info.duration if info.duration > 0 else 0.0
     estimated_mb = (bitrate * total_s) / (1024 * 1024)
     minutes = total_s / 60
-    return f"~{minutes:.1f} min of footage, ~{estimated_mb:.0f} MB at the source's bitrate"
+    # :.0f rounds anything under half a megabyte down to a bare "0 MB", which
+    # reads as free rather than small. A floor keeps the sentence honest
+    # about there being a real, if tiny, cost.
+    size = "<1 MB" if 0 < estimated_mb < 1 else f"~{estimated_mb:.0f} MB"
+    return f"~{minutes:.1f} min of footage, {size} at the source's bitrate"

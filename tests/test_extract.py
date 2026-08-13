@@ -104,17 +104,51 @@ def test_extract_shot_is_silent_when_source_has_no_audio(tmp_path, fixture_video
 
 
 def test_extract_names_files_by_timecode(tmp_path, fixture_video):
-    path = library_path(Workspace(root=tmp_path), fixture_video, 65.5, 4.25)
-    assert path.name == "00h01m05.500s__4.25s.mp4"
-    assert path.parent == Workspace(root=tmp_path).library / fixture_video.stem
-
-
-def test_two_shots_starting_in_the_same_second_do_not_collide(tmp_path):
     ws = Workspace(root=tmp_path)
-    video = Path("source.mp4")
-    first = library_path(ws, video, 1.100, 0.5)
-    second = library_path(ws, video, 1.600, 0.5)
+    path = library_path(ws, fixture_video, 65.5, 4.25)
+    assert path.name == "00h01m05.500s__4.25s.mp4"
+    assert path.parent == ws.library / f"{fixture_video.stem}__{video_id(fixture_video)}"
+
+
+def test_two_shots_starting_in_the_same_second_do_not_collide(tmp_path, fixture_video):
+    ws = Workspace(root=tmp_path)
+    first = library_path(ws, fixture_video, 1.100, 0.5)
+    second = library_path(ws, fixture_video, 1.600, 0.5)
     assert first != second
+
+
+def test_two_videos_sharing_a_filename_get_distinct_directories(tmp_path):
+    """`library_path` must not key a video's directory on its stem alone.
+
+    Two sources named `clip.mp4` in different projects used to collide on
+    `library/clip/...`, so the second extraction silently overwrote the
+    first's master file while the database went on claiming both rows'
+    paths were fine.
+    """
+    ws = Workspace(root=tmp_path)
+    project_a = tmp_path / "projA" / "clip.mp4"
+    project_b = tmp_path / "projB" / "clip.mp4"
+    project_a.parent.mkdir(parents=True)
+    project_b.parent.mkdir(parents=True)
+    run([
+        "ffmpeg", "-y", "-v", "error", "-f", "lavfi",
+        "-i", "color=c=0xFF0000:s=64x64:d=1:r=5",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", str(project_a),
+    ])
+    run([
+        "ffmpeg", "-y", "-v", "error", "-f", "lavfi",
+        "-i", "color=c=0x0000FF:s=64x64:d=1:r=5",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", str(project_b),
+    ])
+    assert project_a.stem == project_b.stem
+
+    first = library_path(ws, project_a, 0.0, 1.0)
+    second = library_path(ws, project_b, 0.0, 1.0)
+    assert first != second
+    assert first.parent != second.parent
+    # Still browsable by eye: the stem leads, the hash only disambiguates.
+    assert first.parent.name.startswith("clip__")
+    assert second.parent.name.startswith("clip__")
 
 
 # --- library.extract_all -------------------------------------------------
@@ -167,6 +201,76 @@ def test_extract_all_records_the_source_video(conn, workspace, fixture_video):
     assert store.video_display_name(conn, video_id(fixture_video)) == fixture_video.name
 
 
+def test_extract_all_keeps_two_same_named_sources_distinct(tmp_path):
+    """Reproduces the review's scenario end to end, through extract_all and
+    the store: two videos sharing a filename, each extracted into the same
+    workspace, must both survive on disk with distinct paths, and each
+    database row must point at footage that actually matches its own
+    video_hash -- not merely at a path that still exists."""
+    project_a = tmp_path / "projA" / "clip.mp4"
+    project_b = tmp_path / "projB" / "clip.mp4"
+    project_a.parent.mkdir(parents=True)
+    project_b.parent.mkdir(parents=True)
+    run([
+        "ffmpeg", "-y", "-v", "error", "-f", "lavfi",
+        "-i", "color=c=0xFF0000:s=64x64:d=2:r=5",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", str(project_a),
+    ])
+    run([
+        "ffmpeg", "-y", "-v", "error", "-f", "lavfi",
+        "-i", "color=c=0x0000FF:s=64x64:d=2:r=5",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", str(project_b),
+    ])
+    assert video_id(project_a) != video_id(project_b)
+
+    workspace = Workspace(root=tmp_path / "ws")
+    conn = connect(workspace.database)
+    shot = Shot(index=0, start=0.0, end=2.0)
+
+    added_a, _ = extract_all(conn, video=project_a, workspace=workspace, shots=[shot])
+    added_b, _ = extract_all(conn, video=project_b, workspace=workspace, shots=[shot])
+    assert (added_a, added_b) == (1, 1)
+
+    clips = store.library_clips(conn)
+    assert len(clips) == 2
+    paths = {clip["path"] for clip in clips}
+    assert len(paths) == 2, f"masters collided onto the same path: {paths}"
+
+    def _sample(clip_path: Path) -> tuple[int, int, int]:
+        frame = tmp_path / f"frame_{clip_path.name}.png"
+        run([
+            "ffmpeg", "-y", "-v", "error", "-ss", "0.5", "-i", str(clip_path),
+            "-frames:v", "1", str(frame),
+        ])
+        return Image.open(frame).convert("RGB").getpixel((10, 10))
+
+    for clip in clips:
+        resolved = workspace.root / clip["path"]
+        assert resolved.exists()
+        pixel = _sample(resolved)
+        if clip["video_hash"] == video_id(project_a):
+            assert pixel[0] > 150 and pixel[2] < 100, ("expected red", clip["path"], pixel)
+        else:
+            assert clip["video_hash"] == video_id(project_b)
+            assert pixel[2] > 150 and pixel[0] < 100, ("expected blue", clip["path"], pixel)
+
+
+def test_extract_all_accepts_precomputed_shots(conn, workspace, fixture_video, monkeypatch):
+    """A caller that already ran detect_shots (to print a count or estimate
+    before starting) must not pay for scene detection a second time."""
+    import cutlist.library as library_module
+
+    shots = detect_shots(fixture_video)
+
+    def boom(*args, **kwargs):
+        raise AssertionError("detect_shots re-run despite shots being provided")
+
+    monkeypatch.setattr(library_module, "detect_shots", boom)
+
+    added, skipped = extract_all(conn, video=fixture_video, workspace=workspace, shots=shots)
+    assert (added, skipped) == (len(shots), 0)
+
+
 def test_extract_all_reports_progress_per_shot(conn, workspace, fixture_video):
     seen = []
     extract_all(
@@ -201,6 +305,27 @@ def test_estimate_mentions_a_size(fixture_video):
     assert "MB" in estimate(fixture_video, shots)
 
 
+def test_estimate_floors_tiny_sizes_instead_of_rounding_to_zero(tmp_path, monkeypatch):
+    """:.0f rounds anything under half a megabyte down to a bare "0 MB",
+    which reads as free rather than small."""
+    import cutlist.library as library_module
+    from cutlist.media.probe import VideoInfo
+
+    video = tmp_path / "tiny.mp4"
+    video.write_bytes(b"x" * 1024)  # 1 KB, so bitrate is tiny regardless of duration
+
+    monkeypatch.setattr(
+        library_module, "probe",
+        lambda path: VideoInfo(
+            path=path, duration=1000.0, width=1, height=1, fps=1.0, has_audio=False
+        ),
+    )
+
+    text = estimate(video, [Shot(index=0, start=0.0, end=5.0)])
+    assert "<1 MB" in text
+    assert "~0 MB" not in text
+
+
 # --- CLI: cutlist extract --------------------------------------------------
 
 
@@ -216,6 +341,22 @@ def test_extract_command_second_run_skips_everything(fixture_video, tmp_path):
     result = runner.invoke(app, ["extract", str(fixture_video), "--root", str(tmp_path)])
     assert result.exit_code == 0, result.stdout
     assert "0 added, 6 skipped" in result.stdout
+
+
+def test_extract_command_detects_shots_only_once(fixture_video, tmp_path, monkeypatch):
+    """Scene detection decodes the whole video; extract prints the count and
+    estimate from one detect_shots call and must hand that same list to
+    extract_all rather than paying for a second decode."""
+    import cutlist.library as library_module
+
+    def boom(*args, **kwargs):
+        raise AssertionError("extract_all re-ran detect_shots instead of reusing the CLI's list")
+
+    monkeypatch.setattr(library_module, "detect_shots", boom)
+
+    result = runner.invoke(app, ["extract", str(fixture_video), "--root", str(tmp_path)])
+    assert result.exit_code == 0, result.stdout
+    assert "6 added, 0 skipped" in result.stdout
 
 
 def test_extract_missing_video_exits_nonzero_with_clean_error(tmp_path):

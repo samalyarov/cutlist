@@ -514,9 +514,15 @@ def extract(
         typer.echo(f"[{index}/{total}] shot {shot.index}  {shot.duration:.2f}s  {status}")
 
     added, skipped = extract_all(
-        conn, video=video, workspace=workspace, crf=crf, on_progress=report
+        conn, video=video, workspace=workspace, crf=crf, shots=found, on_progress=report
     )
-    typer.echo(f"\n{added} added, {skipped} skipped -> {workspace.library / video.stem}")
+    # Not the exact per-clip directory: library_path folds the source's
+    # content hash into it, and re-deriving that here would duplicate a
+    # naming scheme this module does not own. `cutlist library` has the
+    # real paths.
+    typer.echo(
+        f"\n{added} added, {skipped} skipped -> {workspace.library}  (see `cutlist library`)"
+    )
 
 
 @app.command()
