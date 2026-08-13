@@ -15,6 +15,8 @@ from cutlist.db import store
 from cutlist.db.schema import connect
 from cutlist.demo import build_demo_source
 from cutlist.feedback.rate import parse_segment_marks
+from cutlist.library import estimate as estimate_extraction
+from cutlist.library import extract_all
 from cutlist.media.caption import FontError, render_caption
 from cutlist.media.probe import probe as probe_video
 from cutlist.media.render import render_clip
@@ -490,6 +492,62 @@ def rerender(
 
     written = rebuild_clip(conn, root=root, clip_id=row["id"])
     typer.echo(f"rebuilt {wanted} ({written.stat().st_size / 1024:.0f} KB)")
+
+
+@app.command()
+@handle_errors
+def extract(
+    video: Path,
+    crf: int = typer.Option(18, "--crf", help="x264 quality for library masters (lower = better)."),
+    root: Path = typer.Option(Path("."), "--root", help="Workspace root."),
+) -> None:
+    """Extract every detected shot into the reusable clip library."""
+    _require(video)
+    workspace = Workspace(root=root)
+    conn = connect(workspace.database)
+
+    typer.echo("detecting shots...")
+    found = detect_shots(video)
+    typer.echo(f"{len(found)} shots  ({estimate_extraction(video, found)})")
+
+    def report(index: int, total: int, shot, status: str) -> None:
+        typer.echo(f"[{index}/{total}] shot {shot.index}  {shot.duration:.2f}s  {status}")
+
+    added, skipped = extract_all(
+        conn, video=video, workspace=workspace, crf=crf, on_progress=report
+    )
+    typer.echo(f"\n{added} added, {skipped} skipped -> {workspace.library / video.stem}")
+
+
+@app.command()
+@handle_errors
+def library(
+    video: str | None = typer.Option(None, "--video", help="Filter by source video hash."),
+    as_json: bool = typer.Option(False, "--json", help="Emit the list as JSON."),
+    root: Path = typer.Option(Path("."), "--root", help="Workspace root."),
+) -> None:
+    """List extracted library clips: id, source, timecode, duration, path.
+
+    Exists so the ids `assemble` needs are actually discoverable -- an id
+    nobody can look up is as good as no id at all.
+    """
+    conn = connect(Workspace(root=root).database)
+    clips = store.library_clips(conn, video=video)
+
+    if as_json:
+        typer.echo(json.dumps(clips, indent=2))
+        return
+
+    if not clips:
+        typer.echo("no library clips yet -- run `cutlist extract <video>` first")
+        return
+
+    for clip in clips:
+        typer.echo(
+            f"{clip['id']:>4}  {clip['display_name']:<24}  "
+            f"{clip['start_s']:>9.3f}s  {clip['duration_s']:>6.2f}s  {clip['path']}"
+        )
+    typer.echo(f"\n{len(clips)} library clips")
 
 
 # `python -m cutlist.cli` runs this file as __main__, where the console-script

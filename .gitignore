@@ -31,6 +31,7 @@ input/
 cache/
 work/
 output/
+library/
 references/
 
 # Presets are personal -- captions, pacing, whatever someone is making. Only

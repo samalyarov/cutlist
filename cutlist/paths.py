@@ -60,6 +60,10 @@ class Workspace:
     def output(self) -> Path:
         return self.root / "output"
 
+    @property
+    def library(self) -> Path:
+        return self.root / "library"
+
     def cache_for(self, video: Path) -> Path:
         path = self.cache / f"{video.stem}__{video_id(video)}"
         path.mkdir(parents=True, exist_ok=True)
