@@ -7,6 +7,7 @@ caption:
   fill: "#FFFFFF"
   outline: "#000000"
   outline_frac: 0.009
+  # font: "Impact"            # a family name, or a full path to a .ttf
 
 rhythm:
   segments: {min: 4, max: 10}

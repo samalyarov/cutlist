@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
@@ -38,23 +39,94 @@ class FontError(RuntimeError):
     """No usable font was found, or it can't render the caption text."""
 
 
-def resolve_font(name: str | None) -> Path:
-    """Find a bold font that covers Cyrillic.
+FONT_SUFFIXES = frozenset({".ttf", ".otf", ".ttc"})
 
-    A preset may name an explicit file; otherwise fall back to whatever the
-    platform ships. Arial Bold is the safe default on Windows.
+
+def font_directories() -> list[Path]:
+    """Where this platform keeps fonts.
+
+    Only directories that exist are returned, so the list doubles as the thing
+    an error message can honestly claim to have searched.
     """
-    if name:
-        explicit = Path(name)
-        if explicit.exists():
-            return explicit
-        raise FontError(f"font not found: {name}")
+    home = Path.home()
+    candidates = [
+        Path(r"C:\Windows\Fonts"),
+        Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft" / "Windows" / "Fonts",
+        Path("/usr/share/fonts"),
+        Path("/usr/local/share/fonts"),
+        home / ".fonts",
+        home / ".local" / "share" / "fonts",
+        Path("/Library/Fonts"),
+        Path("/System/Library/Fonts"),
+        home / "Library" / "Fonts",
+    ]
+    return [d for d in candidates if d.is_dir()]
 
-    for candidate in FONT_CANDIDATES:
-        if candidate.exists():
-            return candidate
+
+def _normalised(name: str) -> str:
+    """Fold the differences that do not distinguish one font from another."""
+    return "".join(ch for ch in name.lower() if ch.isalnum())
+
+
+def _family_of(path: Path) -> str | None:
+    """The font's own idea of its family name, or None if unreadable."""
+    try:
+        return ImageFont.truetype(str(path), size=12).getname()[0]
+    except Exception:
+        # A corrupt or unsupported file must not break enumeration.
+        return None
+
+
+def available_fonts() -> list[tuple[str, Path]]:
+    """Every readable font on this machine, as (family, path), family-sorted."""
+    seen: dict[str, Path] = {}
+    for directory in font_directories():
+        for path in sorted(directory.rglob("*")):
+            if not path.is_file() or path.suffix.lower() not in FONT_SUFFIXES:
+                continue
+            family = _family_of(path)
+            if family and family not in seen:
+                seen[family] = path
+    return sorted(seen.items())
+
+
+def resolve_font(name: str | None) -> Path:
+    """Find a font: an explicit path, a family name, or the platform default.
+
+    A path is the strong claim and wins outright. A bare name is matched
+    against installed fonts -- first on filename, then on the family name the
+    font declares -- so a preset can say `font: "Impact"` without anyone having
+    to know where the platform hides its fonts.
+    """
+    if not name:
+        for candidate in FONT_CANDIDATES:
+            if candidate.exists():
+                return candidate
+        raise FontError(
+            "no usable font found; set caption.font to a font name or a .ttf "
+            "path in the preset"
+        )
+
+    explicit = Path(name)
+    if explicit.exists():
+        return explicit
+
+    wanted = _normalised(name)
+    for directory in font_directories():
+        for path in sorted(directory.rglob("*")):
+            if path.is_file() and path.suffix.lower() in FONT_SUFFIXES:
+                if _normalised(path.stem) == wanted:
+                    return path
+
+    for family, path in available_fonts():
+        if _normalised(family) == wanted:
+            return path
+
+    searched = ", ".join(str(d) for d in font_directories())
     raise FontError(
-        "no usable font found; set caption.font to a .ttf path in the preset"
+        f"font not found: {name!r}. Looked for a file at that path, then for a "
+        f"matching font in: {searched}. Run `cutlist fonts` to see what is "
+        f"available."
     )
 
 

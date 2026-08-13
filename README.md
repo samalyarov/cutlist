@@ -46,6 +46,7 @@ cutlist review [--video HASH] [--preset NAME] [--port N] [--host ADDR] [--all] [
 cutlist rate <clip-path> <fire|ok|no> [--segments "1:good,3:veto"]
 cutlist rerender <clip-path>
 cutlist ratings [--json]
+cutlist fonts [--search TEXT]
 ```
 
 `demo` needs no input file -- see [Start here](#start-here) above.
@@ -116,6 +117,7 @@ caption:
   fill: "#FFFFFF"
   outline: "#000000"
   outline_frac: 0.009
+  # font: "Impact"               # family name or .ttf path; omit for the platform default
 rhythm:
   segments: {min: 4, max: 10}
   seg_duration: {min: 1.2, target: 2.0, max: 2.8}

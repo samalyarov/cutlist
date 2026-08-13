@@ -455,6 +455,28 @@ def review(
 
 @app.command()
 @handle_errors
+def fonts(
+    search: str | None = typer.Option(None, "--search", help="Filter by substring."),
+) -> None:
+    """List fonts a preset's caption.font can name."""
+    from cutlist.media.caption import available_fonts
+
+    found = available_fonts()
+    if search:
+        needle = search.lower()
+        found = [(family, path) for family, path in found if needle in family.lower()]
+
+    if not found:
+        typer.echo("no fonts found" + (f" matching {search!r}" if search else ""))
+        return
+
+    for family, path in found:
+        typer.echo(f"{family}\n    {path}")
+    typer.echo(f"\n{len(found)} fonts")
+
+
+@app.command()
+@handle_errors
 def rerender(
     clip: str = typer.Argument(..., help="Path of the clip, as written by draft."),
     root: Path = typer.Option(Path("."), "--root", help="Workspace root."),
