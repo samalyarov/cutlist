@@ -63,6 +63,11 @@ def test_output_dir_groups_by_video_then_preset_then_run(tmp_path, fixture_video
     assert out.parent.parent.name == fixture_video.stem
 
 
+def test_workspace_library_is_a_root_level_sibling_of_output(tmp_path):
+    ws = Workspace(root=tmp_path)
+    assert ws.library == tmp_path / "library"
+
+
 def test_output_dirs_of_two_runs_are_distinct(tmp_path, fixture_video):
     # Clips are named by ordinal, so a shared directory would mean run 2
     # silently overwriting run 1's files.

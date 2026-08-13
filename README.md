@@ -41,11 +41,15 @@ command. Run the tests with:
 cutlist demo [--count N] [--root DIR] [--seed N]
 cutlist probe <video>
 cutlist shots <video> [--json]
-cutlist draft <video> --preset <preset.yaml> [--count N] [--caption "..."] [--root DIR] [--seed N]
+cutlist draft <video> --preset <preset.yaml> [--count N] [--caption "..."] [--root DIR] [--seed N] [--keep-shots]
+cutlist extract <video> [--root DIR] [--crf N]
+cutlist library [--video HASH] [--json]
+cutlist assemble <ids> --preset <preset.yaml> [--caption "..."] [--root DIR]
 cutlist review [--video HASH] [--preset NAME] [--port N] [--host ADDR] [--all] [--no-open]
 cutlist rate <clip-path> <fire|ok|no> [--segments "1:good,3:veto"]
 cutlist rerender <clip-path>
 cutlist ratings [--json]
+cutlist fonts [--search TEXT]
 ```
 
 `demo` needs no input file -- see [Start here](#start-here) above.
@@ -83,7 +87,11 @@ video ──> probe ────> dimensions, fps, duration
       └─> detect ───> shots (cuts found by content delta)
                         │
                         ▼
+                    extract ──> library/  whole shots, source quality,
+                        │             no caption -- reusable anywhere
+                        ▼
                      select ──> segments, subject to the preset's rhythm
+                        │        (or `assemble`, from ids you choose)
                         │
                         ▼
                      render ──> one encode pass per segment, caption burnt in
@@ -111,11 +119,13 @@ See `presets/sample_preset.yaml` for a working example.
 name: sample_preset
 caption:
   text: "SAMPLE CAPTION"        # overridable with --caption
+  # font: "Impact"              # family name or .ttf path; omit for the default
   position: top_center          # top_center | bottom_center
   size_frac: 0.125               # fraction of output height
   fill: "#FFFFFF"
   outline: "#000000"
   outline_frac: 0.009
+  # font: "Impact"               # family name or .ttf path; omit for the platform default
 rhythm:
   segments: {min: 4, max: 10}
   seg_duration: {min: 1.2, target: 2.0, max: 2.8}
@@ -137,6 +147,52 @@ numbers, and pass its path to `--preset`. No code changes needed.
 
 Only the sample preset is tracked; `presets/` is otherwise ignored, so your own
 presets stay yours.
+
+## The library
+
+`extract` cuts a video into its shots and keeps them:
+
+```
+cutlist extract "input/my-video.mp4"
+cutlist library
+cutlist assemble 2,3,4,17 --preset presets/sample_preset.yaml
+```
+
+A library clip is a **whole detected shot**, at source resolution, with no
+caption and no letterbox, and audio kept when the source has it. Those last
+three matter: these are masters for reuse, and burning in a caption or
+downscaling to 854x480 are decisions belonging to one finished clip, not to the
+footage it came from.
+
+They are whole shots rather than the trimmed pieces a draft picks, because a
+shot is the same shot whichever run found it. Trimmed picks would fill the
+library with near-duplicates of the same footage at slightly different in and
+out points, and an id would stop meaning anything durable.
+
+Files land in `library/<video>__<hash>/<timecode>__<duration>s.mp4`. They are
+ordinary MP4s in an ordinary directory -- browse it, and drag whatever you want
+into another project. The hash in the directory name is not decoration: two
+videos that happen to share a filename would otherwise overwrite each other's
+masters. `cutlist library` maps ids to paths for the times an id is what you
+need.
+
+`assemble` builds a video from the ids you give, in the order you give them,
+repeats allowed -- the order is the edit. It applies the preset's `caption` and
+`output` blocks but **ignores `rhythm`**: you chose those clips deliberately,
+and a duration rule that dropped some of them would be answering a question you
+did not ask.
+
+An assembled clip records the *original* video and timecodes, not the library
+file, so it decomposes exactly like a drafted one and a rating on it means the
+same thing.
+
+`draft --keep-shots` also files the shots it cut, for when you are drafting
+something you know you will want to reuse. It is off by default.
+
+**Extraction costs what a transcode costs.** Every shot of a feature-length
+video is effectively re-encoding the whole film, and can use more disk than the
+source did, because each clip needs its own keyframe. `extract` prints the shot
+count and an estimate before it starts.
 
 ## Rating
 
@@ -192,6 +248,13 @@ unreliable over Docker Desktop's bind mounts, and the failure mode is a
 corrupted ratings database -- the one artifact with no backup. If you need
 Docker on Windows anyway, keep the database in a named volume rather than a
 bind mount.
+
+## Licence
+
+AGPL-3.0-only. Use it, modify it, run it. If you modify it and let other people
+use it over a network, you have to publish your source too.
+
+If that does not suit your situation, ask me about a commercial licence.
 
 ## Current state
 

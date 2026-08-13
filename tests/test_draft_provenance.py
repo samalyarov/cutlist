@@ -264,3 +264,69 @@ output:
     assert len(segments) == 2
     for segment in segments:
         assert store.segment_thumbnail(conn, segment["id"]) is not None
+
+
+def test_draft_files_nothing_in_the_library_by_default(tmp_path, fixture_video):
+    """The default path must be exactly what it was before the library existed."""
+    result = runner.invoke(
+        app,
+        ["draft", str(fixture_video), "--preset", "presets/sample_preset.yaml",
+         "--count", "1", "--seed", "5", "--root", str(tmp_path)],
+    )
+    assert result.exit_code == 0, result.output
+
+    conn = connect(tmp_path / "cutlist.sqlite")
+    assert conn.execute("SELECT COUNT(*) FROM library_clip").fetchone()[0] == 0
+    assert not (tmp_path / "library").exists()
+
+
+def test_keep_shots_files_the_whole_shots_not_the_trimmed_picks(tmp_path, fixture_video):
+    """A shot is the same shot whichever run found it, so the library stores
+    whole shots -- trimmed picks would be near-duplicates with unstable ids."""
+    result = runner.invoke(
+        app,
+        ["draft", str(fixture_video), "--preset", "presets/sample_preset.yaml",
+         "--count", "1", "--seed", "5", "--keep-shots", "--root", str(tmp_path)],
+    )
+    assert result.exit_code == 0, result.output
+
+    conn = connect(tmp_path / "cutlist.sqlite")
+    library = conn.execute(
+        "SELECT start_s, end_s FROM library_clip ORDER BY start_s"
+    ).fetchall()
+    assert library, "keep-shots should have filed something"
+
+    # Every library entry matches a shot span, not a segment span. The segments
+    # are centred trims strictly inside their shots, so a library row whose
+    # bounds equalled a segment's would prove the wrong thing was stored.
+    segments = conn.execute(
+        "SELECT seg_start_s, seg_end_s, shot_start_s, shot_end_s FROM segment"
+    ).fetchall()
+    shot_spans = {(row["shot_start_s"], row["shot_end_s"]) for row in segments}
+    segment_spans = {(row["seg_start_s"], row["seg_end_s"]) for row in segments}
+    stored = {(row["start_s"], row["end_s"]) for row in library}
+
+    assert stored <= shot_spans
+    assert not (stored & segment_spans)
+
+
+def test_keep_shots_reuses_what_extract_already_stored(tmp_path, fixture_video):
+    """One way footage enters the library, so a draft after an extract adds
+    nothing and re-encodes nothing."""
+    assert runner.invoke(
+        app, ["extract", str(fixture_video), "--root", str(tmp_path)]
+    ).exit_code == 0
+
+    conn = connect(tmp_path / "cutlist.sqlite")
+    before = conn.execute("SELECT COUNT(*) FROM library_clip").fetchone()[0]
+    stamps = {p: p.stat().st_mtime_ns for p in (tmp_path / "library").rglob("*.mp4")}
+
+    result = runner.invoke(
+        app,
+        ["draft", str(fixture_video), "--preset", "presets/sample_preset.yaml",
+         "--count", "1", "--seed", "5", "--keep-shots", "--root", str(tmp_path)],
+    )
+    assert result.exit_code == 0, result.output
+
+    assert conn.execute("SELECT COUNT(*) FROM library_clip").fetchone()[0] == before
+    assert {p: p.stat().st_mtime_ns for p in (tmp_path / "library").rglob("*.mp4")} == stamps

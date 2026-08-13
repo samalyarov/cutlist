@@ -59,6 +59,30 @@ def record_video(
         )
 
 
+RUN_KINDS = ("draft", "assemble")
+
+# Timecodes are compared for identity in library_clip's UNIQUE constraint, and
+# float equality is not identity. Rounding both writes and lookups to the same
+# precision makes "the same shot" decidable for every timecode this project
+# actually produces: PySceneDetect's are frame_num / framerate, which is
+# bit-deterministic for a given file, so re-detecting the same shot rounds to
+# the same millisecond every time. Rounding cannot make it decidable in the
+# abstract -- two values one ULP apart that straddle an exact half-millisecond
+# boundary can still round to different milliseconds and both insert -- but
+# that boundary is not one bit-deterministic detection of the same file can
+# land on either side of.
+MS = 3
+
+
+def ms(value: float) -> float:
+    """A timecode rounded to the precision the library treats as identity."""
+    return round(value, MS)
+
+
+class RatingError(ValueError):
+    """A rating was malformed -- a verdict, mark, or --segments string."""
+
+
 def start_run(
     conn: sqlite3.Connection,
     *,
@@ -69,21 +93,28 @@ def start_run(
     seed: int,
     cutlist_version: str,
     video_hashes: list[str],
+    kind: str = "draft",
 ) -> int:
     """Open a run and record which sources it was pointed at.
 
     Called before any clip is rendered, so a run that fails partway still
     leaves a record of its inputs.
+
+    `kind` distinguishes a reproducible draft from a hand-picked assembly:
+    `seed` describes how a draft was sampled, and recording it against an
+    assembled run without saying so would be a quiet lie about reproducibility.
     """
+    if kind not in RUN_KINDS:
+        raise RatingError(f"kind must be one of {', '.join(RUN_KINDS)}, got {kind!r}")
     with conn:
         cursor = conn.execute(
             """
             INSERT INTO run (preset_name, preset_sha256, preset_json, caption_text,
-                             seed, cutlist_version, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+                             seed, cutlist_version, created_at, kind)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (preset_name, preset_sha256, preset_json, caption_text, seed,
-             cutlist_version, _now()),
+             cutlist_version, _now(), kind),
         )
         run_id = int(cursor.lastrowid)
         conn.executemany(
@@ -141,12 +172,72 @@ def record_clip(
     return clip_id
 
 
+def record_library_clip(
+    conn: sqlite3.Connection,
+    *,
+    video_hash: str,
+    start_s: float,
+    end_s: float,
+    shot_index: int | None,
+    path: str,
+    duration_s: float,
+) -> int:
+    """Record one extracted shot, or return the id of the one already there.
+
+    Extraction is idempotent: re-running it over a video finds the same shot
+    boundaries and must neither duplicate rows nor re-encode footage. The
+    conflict is resolved by the INSERT itself (ON CONFLICT DO NOTHING) rather
+    than by checking for an existing row first and inserting second: a
+    check-then-insert spans two statements, and two concurrent extractions
+    racing on the same shot can both observe "not there yet" and both attempt
+    to insert. record_video resolves the equivalent race the same way.
+
+    duration_s is not stored as given -- it is derived from the rounded
+    start/end pair, so a row can never claim a duration that disagrees with
+    its own timecodes.
+    """
+    start, end = ms(start_s), ms(end_s)
+    with conn:
+        conn.execute(
+            "INSERT INTO library_clip (video_hash, start_s, end_s, shot_index, "
+            "path, duration_s, created_at) VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT (video_hash, start_s, end_s) DO NOTHING",
+            (video_hash, start, end, shot_index, path, ms(end - start), _now()),
+        )
+    return int(library_clip_at(conn, video_hash=video_hash, start_s=start, end_s=end)["id"])
+
+
+def library_clip_at(
+    conn: sqlite3.Connection, *, video_hash: str, start_s: float, end_s: float
+) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT * FROM library_clip WHERE video_hash = ? AND start_s = ? AND end_s = ?",
+        (video_hash, ms(start_s), ms(end_s)),
+    ).fetchone()
+
+
+def library_clip(conn: sqlite3.Connection, clip_id: int) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT * FROM library_clip WHERE id = ?", (clip_id,)
+    ).fetchone()
+
+
+def library_clips(conn: sqlite3.Connection, *, video: str | None = None) -> list[dict]:
+    """Everything in the library, videos alphabetically by name, then in timecode order."""
+    sql = """
+        SELECT library_clip.*, video.display_name
+        FROM library_clip JOIN video ON video.video_hash = library_clip.video_hash
+    """
+    params: list[object] = []
+    if video is not None:
+        sql += " WHERE library_clip.video_hash = ?"
+        params.append(video)
+    sql += " ORDER BY video.display_name, video.video_hash, library_clip.start_s"
+    return [dict(row) for row in conn.execute(sql, params)]
+
+
 VERDICTS = ("fire", "ok", "no")
 MARKS = ("good", "bad", "veto")
-
-
-class RatingError(ValueError):
-    """A rating was malformed -- a verdict, mark, or --segments string."""
 
 
 class RatingNotFound(LookupError):

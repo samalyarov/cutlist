@@ -11,10 +11,13 @@ from pathlib import Path
 
 import typer
 
+from cutlist.assemble import AssembleError, assemble_clips, parse_ids
 from cutlist.db import store
 from cutlist.db.schema import connect
 from cutlist.demo import build_demo_source
 from cutlist.feedback.rate import parse_segment_marks
+from cutlist.library import estimate as estimate_extraction
+from cutlist.library import extract_all
 from cutlist.media.caption import FontError, render_caption
 from cutlist.media.probe import probe as probe_video
 from cutlist.media.render import render_clip
@@ -34,7 +37,7 @@ app = typer.Typer(help="Assemble short captioned clips from a long video.")
 # unguarded ffprobe parsing -- those are bugs and should look like bugs.
 HANDLED_ERRORS = (
     ToolError, PresetError, FontError, NotEnoughFootage, FileNotFoundError,
-    store.RatingError, store.RatingNotFound, RebuildError,
+    store.RatingError, store.RatingNotFound, RebuildError, AssembleError,
 )
 
 
@@ -189,7 +192,7 @@ def _record_picks(
 
 def _draft_clips(
     conn, *, video: Path, spec, workspace: Workspace,
-    count: int, seed: int, preset_path: Path,
+    count: int, seed: int, preset_path: Path, keep_shots: bool = False,
 ) -> Path:
     """Detect shots, render `count` clips, and record what each was made of.
 
@@ -241,6 +244,18 @@ def _draft_clips(
                     root=workspace.root, picks=picks, video_hash=video_hash,
                     video=video,
                 )
+                if keep_shots:
+                    # The whole shots the picks came from, not the trimmed
+                    # picks themselves -- a shot is the same shot whichever run
+                    # found it, so the library keeps stable identities instead
+                    # of near-duplicates at slightly different in and out
+                    # points. Routed through extract_all so there is exactly
+                    # one way footage enters the library, and it skips whatever
+                    # is already there.
+                    extract_all(
+                        conn, video=video, workspace=workspace,
+                        shots=[pick.shot for pick in picks],
+                    )
             except (NotEnoughFootage, ToolError) as exc:
                 typer.echo(
                     f"wrote {written} of {count} clips; failed on {ordinal:02d}: {exc}",
@@ -271,6 +286,10 @@ def draft(
     caption: str | None = typer.Option(None, "--caption", help="Override the preset's text."),
     root: Path = typer.Option(Path("."), "--root", help="Workspace root."),
     seed: int | None = typer.Option(None, "--seed", help="Fix the RNG for reproducible drafts."),
+    keep_shots: bool = typer.Option(
+        False, "--keep-shots",
+        help="Also file the shots these clips were cut from into the library.",
+    ),
 ) -> None:
     """Cut clips using random shot selection, with no scoring or judging."""
     _require(video)
@@ -290,7 +309,7 @@ def draft(
     _draft_clips(
         connect(workspace.database),
         video=video, spec=spec, workspace=workspace,
-        count=count, seed=seed, preset_path=preset,
+        count=count, seed=seed, preset_path=preset, keep_shots=keep_shots,
     )
 
 
@@ -370,6 +389,45 @@ def rate(
         store.mark_shot(conn, segment_id=by_position[position], mark=mark)
 
     typer.echo(f"{wanted}: {verdict}" + (f", {len(marks)} segment marks" if marks else ""))
+
+
+@app.command()
+@handle_errors
+def assemble(
+    clips: str = typer.Argument(..., help='Library clip ids, e.g. "2,3,4" or "2-5,9".'),
+    preset: Path = typer.Option(..., "--preset", help="Path to a preset YAML."),
+    caption: str | None = typer.Option(None, "--caption", help="Override the preset's text."),
+    root: Path = typer.Option(Path("."), "--root", help="Workspace root."),
+) -> None:
+    """Build a video from library clips you name, in the order you name them.
+
+    The preset's caption and output settings apply; its rhythm does not -- you
+    chose these clips, so a duration rule that dropped some of them would be
+    answering a question you did not ask.
+    """
+    _require(preset)
+
+    spec = load_preset(preset)
+    if caption:
+        spec = spec.with_caption(caption)
+
+    ids = parse_ids(clips)
+    workspace = Workspace(root=root)
+    preset_sha256, preset_json = _preset_fingerprint(preset, spec)
+
+    typer.echo(f"caption: {spec.caption.text}")
+    typer.echo(f"assembling {len(ids)} clips...")
+
+    written = assemble_clips(
+        connect(workspace.database),
+        ids=ids,
+        spec=spec,
+        workspace=workspace,
+        preset_sha256=preset_sha256,
+        preset_json=preset_json,
+        cutlist_version=_cutlist_version(),
+    )
+    typer.echo(f"wrote {written.relative_to(root).as_posix()}")
 
 
 @app.command()
@@ -455,6 +513,28 @@ def review(
 
 @app.command()
 @handle_errors
+def fonts(
+    search: str | None = typer.Option(None, "--search", help="Filter by substring."),
+) -> None:
+    """List fonts a preset's caption.font can name."""
+    from cutlist.media.caption import available_fonts
+
+    found = available_fonts()
+    if search:
+        needle = search.lower()
+        found = [(family, path) for family, path in found if needle in family.lower()]
+
+    if not found:
+        typer.echo("no fonts found" + (f" matching {search!r}" if search else ""))
+        return
+
+    for family, path in found:
+        typer.echo(f"{family}\n    {path}")
+    typer.echo(f"\n{len(found)} fonts")
+
+
+@app.command()
+@handle_errors
 def rerender(
     clip: str = typer.Argument(..., help="Path of the clip, as written by draft."),
     root: Path = typer.Option(Path("."), "--root", help="Workspace root."),
@@ -468,6 +548,68 @@ def rerender(
 
     written = rebuild_clip(conn, root=root, clip_id=row["id"])
     typer.echo(f"rebuilt {wanted} ({written.stat().st_size / 1024:.0f} KB)")
+
+
+@app.command()
+@handle_errors
+def extract(
+    video: Path,
+    crf: int = typer.Option(18, "--crf", help="x264 quality for library masters (lower = better)."),
+    root: Path = typer.Option(Path("."), "--root", help="Workspace root."),
+) -> None:
+    """Extract every detected shot into the reusable clip library."""
+    _require(video)
+    workspace = Workspace(root=root)
+    conn = connect(workspace.database)
+
+    typer.echo("detecting shots...")
+    found = detect_shots(video)
+    typer.echo(f"{len(found)} shots  ({estimate_extraction(video, found)})")
+
+    def report(index: int, total: int, shot, status: str) -> None:
+        typer.echo(f"[{index}/{total}] shot {shot.index}  {shot.duration:.2f}s  {status}")
+
+    added, skipped = extract_all(
+        conn, video=video, workspace=workspace, crf=crf, shots=found, on_progress=report
+    )
+    # Not the exact per-clip directory: library_path folds the source's
+    # content hash into it, and re-deriving that here would duplicate a
+    # naming scheme this module does not own. `cutlist library` has the
+    # real paths.
+    typer.echo(
+        f"\n{added} added, {skipped} skipped -> {workspace.library}  (see `cutlist library`)"
+    )
+
+
+@app.command()
+@handle_errors
+def library(
+    video: str | None = typer.Option(None, "--video", help="Filter by source video hash."),
+    as_json: bool = typer.Option(False, "--json", help="Emit the list as JSON."),
+    root: Path = typer.Option(Path("."), "--root", help="Workspace root."),
+) -> None:
+    """List extracted library clips: id, source, timecode, duration, path.
+
+    Exists so the ids `assemble` needs are actually discoverable -- an id
+    nobody can look up is as good as no id at all.
+    """
+    conn = connect(Workspace(root=root).database)
+    clips = store.library_clips(conn, video=video)
+
+    if as_json:
+        typer.echo(json.dumps(clips, indent=2))
+        return
+
+    if not clips:
+        typer.echo("no library clips yet -- run `cutlist extract <video>` first")
+        return
+
+    for clip in clips:
+        typer.echo(
+            f"{clip['id']:>4}  {clip['display_name']:<24}  "
+            f"{clip['start_s']:>9.3f}s  {clip['duration_s']:>6.2f}s  {clip['path']}"
+        )
+    typer.echo(f"\n{len(clips)} library clips")
 
 
 # `python -m cutlist.cli` runs this file as __main__, where the console-script
