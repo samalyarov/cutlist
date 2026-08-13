@@ -96,10 +96,49 @@ FROM segment
 GROUP BY clip_id, film_hash;
 """
 
-MIGRATIONS = [_V1]
+# The project's vocabulary is "video": not every source is a film, and the
+# narrower word invites assumptions about provenance the project does not want.
+#
+# Order matters. SQLite does not refuse a RENAME COLUMN that a view depends on
+# -- it silently rewrites the view's body to use the new name. Left in place,
+# clip_film would survive as a view still named clip_film whose internals said
+# video_hash. There is no ALTER VIEW, so it has to be dropped and recreated for
+# its new name regardless. Table and column renames do propagate correctly into
+# dependent REFERENCES clauses, so the foreign-key graph needs no manual repair.
+_V2 = """
+DROP VIEW IF EXISTS clip_film;
 
-# Derived rather than written by hand to prevent drift: if a later task appends
-# _V2 without bumping this constant, the constant would silently become a lie.
+ALTER TABLE film RENAME TO video;
+ALTER TABLE run_film RENAME TO run_video;
+
+ALTER TABLE video RENAME COLUMN film_hash TO video_hash;
+ALTER TABLE run_video RENAME COLUMN film_hash TO video_hash;
+ALTER TABLE segment RENAME COLUMN film_hash TO video_hash;
+ALTER TABLE shot_rating RENAME COLUMN film_hash TO video_hash;
+
+DROP INDEX IF EXISTS idx_segment_film;
+CREATE INDEX IF NOT EXISTS idx_segment_video ON segment (video_hash);
+
+CREATE VIEW IF NOT EXISTS clip_video AS
+SELECT clip_id, video_hash, COUNT(*) AS segment_count
+FROM segment
+GROUP BY clip_id, video_hash;
+
+-- Thumbnails captured at draft time, so a segment mark stays legible after the
+-- source video is deleted. A separate table rather than a column on segment:
+-- mark_shot and segment_by_id both SELECT *, and a BLOB there would drag image
+-- bytes through every mark written.
+CREATE TABLE IF NOT EXISTS segment_thumbnail (
+    segment_id  INTEGER PRIMARY KEY REFERENCES segment(id) ON DELETE CASCADE,
+    image       BLOB NOT NULL,
+    captured_at TEXT NOT NULL
+);
+"""
+
+MIGRATIONS = [_V1, _V2]
+
+# Derived, never hand-written: a constant that has to be bumped alongside the
+# list is a constant that will eventually disagree with it.
 SCHEMA_VERSION = len(MIGRATIONS)
 
 
@@ -108,11 +147,28 @@ def migrate(conn: sqlite3.Connection) -> None:
     current = conn.execute("PRAGMA user_version").fetchone()[0]
     for version, statements in enumerate(MIGRATIONS, start=1):
         if current < version:
-            conn.executescript(statements)
+            # executescript() commits any pending transaction before it runs, and
+            # then executes the script in autocommit mode unless the script itself
+            # opens a transaction -- so without an explicit BEGIN, each DDL
+            # statement commits on its own as it runs. _V1 could get away with
+            # that because every statement is CREATE ... IF NOT EXISTS and the
+            # whole script is safe to replay. A rename migration cannot: killed
+            # after `ALTER TABLE film RENAME TO video` but before `run_film` is
+            # renamed, user_version is still the old value, so the next connect()
+            # replays the same script from the top against a database that no
+            # longer has a `film` table -- unreadable and unmigratable. The BEGIN
+            # has to live inside the script text, because executescript's own
+            # implicit commit happens before any separately issued BEGIN would
+            # take effect. PRAGMA user_version is itself part of the database's
+            # transactional state, so stamping it inside the same transaction
+            # means the schema change and the version marker commit together or
+            # both roll back.
+            #
             # PRAGMA does not accept bound parameters. version comes from
             # enumerate over a module-level list, so it is always an int.
-            conn.execute(f"PRAGMA user_version = {version:d}")
-    conn.commit()
+            conn.executescript(
+                f"BEGIN;\n{statements}\nPRAGMA user_version = {version:d};\nCOMMIT;"
+            )
 
 
 def connect(path: Path) -> sqlite3.Connection:

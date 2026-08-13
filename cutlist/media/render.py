@@ -1,4 +1,6 @@
+import os
 import shutil
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -8,7 +10,7 @@ from cutlist.shell import run
 
 @dataclass(frozen=True)
 class Segment:
-    """A slice of the source film, in source timecodes."""
+    """A slice of the source video, in source timecodes."""
 
     start: float
     duration: float
@@ -19,7 +21,7 @@ class Segment:
 
 
 def encode_segment(
-    film: Path,
+    video: Path,
     segment: Segment,
     caption_png: Path,
     output: OutputSpec,
@@ -43,7 +45,7 @@ def encode_segment(
     run([
         "ffmpeg", "-y", "-v", "error",
         "-ss", f"{segment.start:.3f}",
-        "-i", str(film),
+        "-i", str(video),
         "-i", str(caption_png),
         "-t", f"{segment.duration:.3f}",
         "-an",
@@ -59,14 +61,27 @@ def _concat_line(part: Path) -> str:
 
     The demuxer parses each path like a single-quoted shell token, so a
     literal `'` in the path has to close the quote, escape one, and reopen
-    it -- otherwise any film with an apostrophe in its name breaks the list.
+    it -- otherwise any video with an apostrophe in its name breaks the list.
     """
     escaped = part.resolve().as_posix().replace("'", "'\\''")
     return f"file '{escaped}'"
 
 
 def concat(parts: list[Path], dest: Path) -> Path:
-    """Join encoded segments without re-encoding."""
+    """Join encoded segments without re-encoding, replacing `dest` atomically.
+
+    ffmpeg writes to a sibling temporary and the result is moved onto `dest`
+    only once a whole file exists, so a failed join cannot damage whatever
+    `dest` already held. `rerender` depends on this: there `dest` is by
+    definition a clip that has already been rated, and destroying it on a
+    failed rebuild would take a judgement with it.
+
+    The temporary is a sibling of `dest` rather than of `parts` because
+    `os.replace` is only atomic within one filesystem, and the caller's
+    scratch lives under `cache/`, which need not share a filesystem with
+    `output/`. It keeps `dest`'s suffix because ffmpeg picks its muxer from
+    the output extension.
+    """
     if not parts:
         raise ValueError("nothing to concatenate")
 
@@ -83,21 +98,27 @@ def concat(parts: list[Path], dest: Path) -> Path:
         encoding="utf-8",
     )
 
+    # Randomly suffixed so two renders racing for the same dest cannot stage
+    # over each other, and dot-prefixed so a crash hard enough to skip the
+    # finally below leaves something obviously not a clip.
+    staged = dest.with_name(f".{dest.stem}.{uuid.uuid4().hex[:8]}{dest.suffix}")
     try:
         run([
             "ffmpeg", "-y", "-v", "error",
             "-f", "concat", "-safe", "0",
             "-i", str(listing),
             "-c", "copy",
-            str(dest),
+            str(staged),
         ])
+        os.replace(staged, dest)
     finally:
         listing.unlink(missing_ok=True)
+        staged.unlink(missing_ok=True)
     return dest
 
 
 def render_clip(
-    film: Path,
+    video: Path,
     segments: list[Segment],
     caption_png: Path,
     output: OutputSpec,
@@ -108,21 +129,11 @@ def render_clip(
     try:
         parts = [
             encode_segment(
-                film, segment, caption_png, output, scratch / f"seg_{i:02d}.mp4"
+                video, segment, caption_png, output, scratch / f"seg_{i:02d}.mp4"
             )
             for i, segment in enumerate(segments)
         ]
-        try:
-            concat(parts, dest)
-        except Exception:
-            # dest is only ever written by concat (via ffmpeg's -y, which
-            # truncates it before ffmpeg can fail mid-write), so this is the
-            # only point where dest could be corrupt. encode_segment writes
-            # solely into scratch, so a failure there must leave a
-            # pre-existing dest -- e.g. a valid clip from an earlier render
-            # -- untouched.
-            dest.unlink(missing_ok=True)
-            raise
+        concat(parts, dest)
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
     return dest

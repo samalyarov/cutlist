@@ -1,0 +1,19 @@
+name: demo
+caption:
+  # Latin text, so the demo renders under any font rather than depending on
+  # the Cyrillic coverage the real presets need.
+  text: "CUTLIST DEMO"
+  position: bottom_center
+  size_frac: 0.10
+  fill: "#FFFFFF"
+  outline: "#000000"
+  outline_frac: 0.009
+rhythm:
+  segments: {min: 4, max: 8}
+  seg_duration: {min: 1.2, target: 2.0, max: 2.8}
+  total: {min: 9, max: 15}
+output:
+  width: 854
+  height: 480
+  fps: 25
+  crf: 20

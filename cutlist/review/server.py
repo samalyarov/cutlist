@@ -5,7 +5,9 @@ from pathlib import Path
 
 from cutlist.db import store
 from cutlist.db.schema import connect
-from cutlist.media.thumbs import thumbnail
+from cutlist.media.sources import SourceMatch, find_source
+from cutlist.media.thumbs import thumbnail_bytes
+from cutlist.paths import Workspace, resolve_within
 
 PAGE = Path(__file__).with_name("page.html")
 
@@ -21,10 +23,8 @@ _CHUNK = 64 * 1024
 def _is_id(value) -> bool:
     """Is this a usable row id from a JSON body?
 
-    `isinstance(True, int)` is True in Python, so a bare int check accepts
-    booleans: {"clip_id": true} would validate and rate clip 1, and
-    {"segment_id": true} would mark segment 1 -- rows the caller never named.
-    Shared by both checks so the two cannot drift apart again.
+    `isinstance(True, int)` is True in Python, so a bare int check would accept
+    {"clip_id": true} and rate clip 1 -- a row the caller never named.
     """
     return isinstance(value, int) and not isinstance(value, bool)
 
@@ -51,7 +51,7 @@ class ReviewHandler(BaseHTTPRequestHandler):
         return self.server.cutlist  # type: ignore[attr-defined]
 
     def _db(self):
-        return connect(self.config["root"] / "cutlist.sqlite")
+        return connect(Workspace(self.config["root"]).database)
 
     def _send_json(self, payload, status: int = 200) -> None:
         body = json.dumps(payload).encode("utf-8")
@@ -64,31 +64,24 @@ class ReviewHandler(BaseHTTPRequestHandler):
     def _send_error(self, status: int, message: str) -> None:
         self._send_json({"ok": False, "error": message}, status=status)
 
-    def _source_for(self, film_hash: str, conn) -> Path | None:
-        """Locate the original video a segment was cut from.
-
-        The database records a display name, not a path, because the file can
-        move. Look for it where the workspace keeps sources.
-        """
-        name = store.film_display_name(conn, film_hash)
-        if name is None:
-            return None
-        candidate = self.config["root"] / "input" / name
-        return candidate if candidate.exists() else None
+    def _source_for(self, video_hash: str, conn) -> SourceMatch | None:
+        """Locate the original video a segment was cut from."""
+        return find_source(
+            self.config["root"], video_hash, store.video_display_name(conn, video_hash)
+        )
 
     def _resolve_within_root(self, relative: str) -> Path | None:
-        """Join a workspace-relative path, refusing to leave the workspace.
+        return resolve_within(self.config["root"], relative)
 
-        `relative` comes from `clip.path` in the database. `draft` only ever
-        writes a path already relative to root, but nothing here enforces
-        that, so a future writer landing an absolute path or a `..` segment
-        must not gain filesystem access outside root.
+    def _is_available(self, relative: str) -> bool:
+        """Is the clip's file actually on disk right now?
+
+        Computed rather than stored: a recorded 'this file is gone' flag can
+        only ever be a stale claim about a filesystem that changed without
+        telling us.
         """
-        root = self.config["root"].resolve()
-        candidate = (self.config["root"] / relative).resolve()
-        if not candidate.is_relative_to(root):
-            return None
-        return candidate
+        resolved = self._resolve_within_root(relative)
+        return resolved is not None and resolved.exists()
 
     def _send_file(self, path: Path, content_type: str) -> None:
         """Serve a file, honouring a single-range request.
@@ -161,12 +154,15 @@ class ReviewHandler(BaseHTTPRequestHandler):
 
         if path == "/api/clips":
             conn = self._db()
-            self._send_json(store.clips_for_review(
+            clips = store.clips_for_review(
                 conn,
-                film=self.config["film"],
+                video=self.config["video"],
                 preset=self.config["preset"],
                 unrated_only=self.config["unrated_only"],
-            ))
+            )
+            for clip in clips:
+                clip["available"] = self._is_available(clip["path"])
+            self._send_json(clips)
             return
 
         match = _CLIP.match(path)
@@ -175,6 +171,7 @@ class ReviewHandler(BaseHTTPRequestHandler):
             if detail is None:
                 self._send_error(404, "no such clip")
                 return
+            detail["available"] = self._is_available(detail["path"])
             self._send_json(detail)
             return
 
@@ -200,20 +197,37 @@ class ReviewHandler(BaseHTTPRequestHandler):
 
     def _serve_thumb(self, segment_id: int) -> None:
         conn = self._db()
-        segment = store.segment_by_id(conn, segment_id)
-        if segment is None:
-            self._send_error(404, "no such segment")
-            return
+        image = store.segment_thumbnail(conn, segment_id)
 
-        source = self._source_for(segment["film_hash"], conn)
-        if source is None:
-            self._send_error(404, "source video not found")
-            return
+        if image is None:
+            # Recorded before thumbnails were captured at draft time. Generate
+            # from the source, and keep it when the source is provably the one
+            # that was drafted from, so the fallback is paid once.
+            segment = store.segment_by_id(conn, segment_id)
+            if segment is None:
+                self._send_error(404, "no such segment")
+                return
+            match = self._source_for(segment["video_hash"], conn)
+            if match is None:
+                self._send_error(404, "source video not found")
+                return
+            midpoint = (segment["seg_start_s"] + segment["seg_end_s"]) / 2
+            image = thumbnail_bytes(match.path, midpoint)
+            # Deliberately asymmetric: a display-name-only match is served but
+            # never stored. A frame from a same-named re-encode keeps the
+            # segment strip legible, which is all the page needs of it; writing
+            # it into the database would make unprovenanced bytes the permanent
+            # record of what was judged, in the one artifact here that cannot
+            # be regenerated. This path fires exactly on databases migrated
+            # from before thumbnails were captured, so it is not a rare case.
+            if match.by_hash:
+                store.record_thumbnail(conn, segment_id=segment_id, image=image)
 
-        cache = self.config["root"] / "cache" / "thumbs"
-        midpoint = (segment["seg_start_s"] + segment["seg_end_s"]) / 2
-        dest = thumbnail(source, midpoint, cache / f"segment_{segment_id}.jpg")
-        self._send_file(dest, "image/jpeg")
+        self.send_response(200)
+        self.send_header("Content-Type", "image/jpeg")
+        self.send_header("Content-Length", str(len(image)))
+        self.end_headers()
+        self.wfile.write(image)
 
     def do_POST(self) -> None:  # noqa: N802 - name fixed by BaseHTTPRequestHandler
         if self.path.split("?", 1)[0] != "/api/ratings":
@@ -239,8 +253,12 @@ class ReviewHandler(BaseHTTPRequestHandler):
         # Everything is validated before anything is written, so a bad mark
         # never leaves a verdict recorded without it, and no earlier mark in
         # the same list is left committed while a later one fails.
-        if not _is_id(clip_id) or store.clip_detail(conn, clip_id) is None:
+        detail = store.clip_detail(conn, clip_id) if _is_id(clip_id) else None
+        if detail is None:
             self._send_error(400, "clip_id must name a recorded clip")
+            return
+        if verdict is not None and not self._is_available(detail["path"]):
+            self._send_error(400, "clip file is missing; it cannot be given a verdict")
             return
         if verdict is not None and verdict not in store.VERDICTS:
             self._send_error(400, f"verdict must be one of {', '.join(store.VERDICTS)}")
@@ -264,10 +282,8 @@ class ReviewHandler(BaseHTTPRequestHandler):
                 )
             if verdict is not None:
                 store.rate_clip(conn, clip_id=clip_id, verdict=verdict)
-        # The store's own rating errors only. Catching bare ValueError /
-        # LookupError here would dress a genuine bug inside store up as a
-        # confident 400, which is the wide behaviour the CLI boundary was
-        # deliberately narrowed away from.
+        # The store's own rating errors only. Catching bare ValueError or
+        # LookupError would dress a genuine bug inside store up as a 400.
         except (store.RatingError, store.RatingNotFound) as exc:
             self._send_error(400, str(exc))
             return
@@ -279,7 +295,8 @@ def build_server(
     *,
     root: Path,
     port: int,
-    film: str | None = None,
+    host: str = "127.0.0.1",
+    video: str | None = None,
     preset: str | None = None,
     unrated_only: bool = True,
 ) -> ThreadingHTTPServer:
@@ -287,11 +304,16 @@ def build_server(
 
     Returned unstarted so tests can run it on an ephemeral port in a thread
     and the CLI can print the URL before blocking on serve_forever().
+
+    `host` defaults to loopback. Binding anything else exposes an
+    unauthenticated server that reads files from the workspace; it exists
+    because a container's loopback is not the host's, so a published port
+    would otherwise reach nothing.
     """
-    httpd = ThreadingHTTPServer(("127.0.0.1", port), ReviewHandler)
+    httpd = ThreadingHTTPServer((host, port), ReviewHandler)
     httpd.cutlist = {  # type: ignore[attr-defined]
         "root": Path(root),
-        "film": film,
+        "video": video,
         "preset": preset,
         "unrated_only": unrated_only,
     }

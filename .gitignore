@@ -25,13 +25,18 @@ htmlcov/
 !.env.example
 *.local.yaml
 
-# Source films, per-movie indexes, run workdirs, rendered clips.
+# Source videos, per-video indexes, run workdirs, rendered clips.
 # Large, regenerable, or not ours to redistribute.
 input/
 cache/
 work/
 output/
 references/
+
+# Presets are personal -- captions, pacing, whatever someone is making. Only
+# the sample is tracked, as the thing to copy when writing your own.
+presets/*
+!presets/sample_preset.yaml
 
 # Media, anywhere in the tree. Drop a `!path/to/clip.mp4` line below if a
 # specific clip ever needs to be tracked as a test fixture.
@@ -68,3 +73,8 @@ desktop.ini
 # LLM
 .claude/
 .superpowers/
+
+# Specs and implementation plans. Development artifacts kept locally rather
+# than published. Earlier commits still contain them; this stops new ones
+# being tracked, and deliberately does not rewrite that history.
+docs/

@@ -1,7 +1,19 @@
 [project]
 name = "cutlist"
 version = "0.1.0"
-description = "Assemble short captioned clips from a feature film"
+description = "Assemble short captioned clips from a long video"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Sam Maliarov" }]
+keywords = ["video", "ffmpeg", "scene-detection", "editing"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Video :: Non-Linear Editor",
+]
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "typer>=0.12",
@@ -12,13 +24,17 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+dev = ["pytest>=8.0", "ruff>=0.6"]
 
 [project.scripts]
 cutlist = "cutlist.cli:app"
 
+[project.urls]
+Repository = "https://github.com/samalyarov/cutlist"
+Issues = "https://github.com/samalyarov/cutlist/issues"
+
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
@@ -29,6 +45,19 @@ include = ["cutlist*"]
 # non-editable install serves GET / into a FileNotFoundError.
 [tool.setuptools.package-data]
 "cutlist.review" = ["page.html"]
+# Bundled so `cutlist demo` works from an installed wheel with no repository
+# checkout -- which is the container's situation exactly.
+"cutlist" = ["demo.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+# Deliberately lint-only. `ruff format` is not adopted: this codebase is
+# hand-wrapped so that related arguments group on a line, and a formatter
+# would flatten that back out.
+[tool.ruff.lint]
+select = ["E", "F", "I"]

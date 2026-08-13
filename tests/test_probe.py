@@ -7,19 +7,19 @@ from cutlist.shell import ToolError, run
 from tests.conftest import FIXTURE_DURATION
 
 
-def test_probe_reads_dimensions_and_fps(fixture_film):
-    info = probe(fixture_film)
+def test_probe_reads_dimensions_and_fps(fixture_video):
+    info = probe(fixture_video)
     assert (info.width, info.height) == (320, 240)
     assert info.fps == pytest.approx(25.0)
 
 
-def test_probe_reads_duration(fixture_film):
-    info = probe(fixture_film)
+def test_probe_reads_duration(fixture_video):
+    info = probe(fixture_video)
     assert info.duration == pytest.approx(FIXTURE_DURATION, abs=0.5)
 
 
-def test_probe_detects_absent_audio(fixture_film):
-    assert probe(fixture_film).has_audio is False
+def test_probe_detects_absent_audio(fixture_video):
+    assert probe(fixture_video).has_audio is False
 
 
 def test_probe_raises_on_missing_file(tmp_path):
@@ -28,8 +28,8 @@ def test_probe_raises_on_missing_file(tmp_path):
 
 
 @pytest.fixture
-def film_with_cover_art(tmp_path):
-    """A tiny film muxed with a larger, disposition-flagged cover thumbnail.
+def video_with_cover_art(tmp_path):
+    """A tiny video muxed with a larger, disposition-flagged cover thumbnail.
 
     The cover is bigger than the real video on purpose: without the
     attached_pic filter it would also win a plain max-by-area comparison,
@@ -52,15 +52,19 @@ def film_with_cover_art(tmp_path):
         "ffmpeg", "-y", "-v", "error",
         "-i", str(base), "-i", str(cover),
         "-map", "0:v", "-map", "1:v",
-        "-c:v:0", "libx264", "-pix_fmt", "yuv420p",
-        "-c:v:1", "mjpeg", "-disposition:v:1", "attached_pic",
+        # Per-stream pixel formats: MJPEG needs full-range yuvj420p, and a global
+        # -pix_fmt silently applies to all output streams including the cover art,
+        # which stricter ffmpeg builds reject as non-compliant.
+        "-c:v:0", "libx264", "-pix_fmt:v:0", "yuv420p",
+        "-c:v:1", "mjpeg", "-pix_fmt:v:1", "yuvj420p",
+        "-disposition:v:1", "attached_pic",
         str(out),
     ])
     return out
 
 
-def test_probe_ignores_attached_cover_art(film_with_cover_art):
-    info = probe(film_with_cover_art)
+def test_probe_ignores_attached_cover_art(video_with_cover_art):
+    info = probe(video_with_cover_art)
     assert (info.width, info.height) == (320, 240)
 
 

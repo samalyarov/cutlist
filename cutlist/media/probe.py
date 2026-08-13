@@ -20,7 +20,7 @@ def _pick_video_stream(streams: list[dict], path: Path) -> dict:
     # Embedded cover art (e.g. an mjpeg thumbnail) shows up as its own
     # video stream, so picking "the" video stream by position or an
     # unfiltered first-match would silently return the thumbnail instead
-    # of the film on files that carry one.
+    # of the video on files that carry one.
     candidates = [
         s for s in streams
         if s["codec_type"] == "video" and not s.get("disposition", {}).get("attached_pic")

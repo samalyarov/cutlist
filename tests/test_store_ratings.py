@@ -11,10 +11,10 @@ def conn(tmp_path):
 
 @pytest.fixture
 def clip_id(conn):
-    store.record_film(conn, film_hash="abc", display_name="fixture.mp4", duration_s=30.0)
+    store.record_video(conn, video_hash="abc", display_name="fixture.mp4", duration_s=30.0)
     run_id = store.start_run(
-        conn, preset_name="real_saturday", preset_sha256="sha", preset_json="{}",
-        caption_text="TOMORROW", seed=7, cutlist_version="0.1.0", film_hashes=["abc"],
+        conn, preset_name="sample_preset", preset_sha256="sha", preset_json="{}",
+        caption_text="TOMORROW", seed=7, cutlist_version="0.1.0", video_hashes=["abc"],
     )
     return store.record_clip(
         conn, run_id=run_id, ordinal=1, path="output/01.mp4", duration_s=6.0,
@@ -58,7 +58,7 @@ def test_mark_shot_copies_the_spans_off_the_segment(conn, clip_id):
     row = conn.execute("SELECT * FROM shot_rating").fetchone()
     assert (row["seg_start_s"], row["seg_end_s"]) == (1.0, 3.0)
     assert (row["shot_start_s"], row["shot_end_s"]) == (0.5, 3.5)
-    assert row["film_hash"] == "abc"
+    assert row["video_hash"] == "abc"
 
 
 def test_a_shot_mark_survives_deletion_of_its_clip(conn, clip_id):
@@ -92,7 +92,7 @@ def test_clips_for_review_hides_clips_that_already_have_a_verdict(conn, clip_id)
 
 
 def test_clips_for_review_filters_by_preset(conn, clip_id):
-    assert store.clips_for_review(conn, preset="real_saturday")
+    assert store.clips_for_review(conn, preset="sample_preset")
     assert store.clips_for_review(conn, preset="nope") == []
 
 
@@ -118,3 +118,30 @@ def test_summary_counts_verdicts_and_marks(conn, clip_id):
     assert result["clips"] == 1
     assert result["verdicts"]["fire"] == 1
     assert result["marks"]["veto"] == 1
+
+
+def test_summary_counts_videos(conn, clip_id):
+    # A dedicated test rather than folding this into the assertion above: the
+    # dict key was renamed from "films" to "videos" alongside the schema rename,
+    # and cli.ratings prints it by name -- a drift between the key and the
+    # f-string that reads it would otherwise pass every other test in the suite
+    # while `cutlist ratings` raised KeyError for the user.
+    assert store.summary(conn)["videos"] == 1
+
+
+def test_clips_for_review_filters_by_video(conn, clip_id):
+    # clip_id's fixture already recorded one clip against video hash "abc"; add a
+    # second video and a second clip against it, so the filter has something to
+    # exclude rather than trivially returning everything it's given.
+    store.record_video(conn, video_hash="xyz", display_name="other.mp4", duration_s=30.0)
+    run_id = store.start_run(
+        conn, preset_name="sample_preset", preset_sha256="sha", preset_json="{}",
+        caption_text="TOMORROW", seed=7, cutlist_version="0.1.0", video_hashes=["xyz"],
+    )
+    other_clip_id = store.record_clip(
+        conn, run_id=run_id, ordinal=1, path="output/02.mp4", duration_s=6.0,
+        segments=[store.SegmentRecord("xyz", 1.0, 3.0, 0.5, 3.5, 0)],
+    )
+
+    assert [c["id"] for c in store.clips_for_review(conn, video="abc")] == [clip_id]
+    assert [c["id"] for c in store.clips_for_review(conn, video="xyz")] == [other_clip_id]

@@ -75,3 +75,25 @@ def test_review_reports_a_taken_port(tmp_path):
         assert str(port) in result.output
     finally:
         holder.close()
+
+
+def test_build_server_binds_loopback_by_default(tmp_path):
+    from cutlist.review.server import build_server
+
+    httpd = build_server(root=tmp_path, port=0)
+    try:
+        assert httpd.server_address[0] == "127.0.0.1"
+    finally:
+        httpd.server_close()
+
+
+def test_build_server_accepts_an_explicit_host(tmp_path):
+    """Without this, a published container port reaches the container's own
+    loopback and cutlist review is unreachable from the host."""
+    from cutlist.review.server import build_server
+
+    httpd = build_server(root=tmp_path, port=0, host="0.0.0.0")
+    try:
+        assert httpd.server_address[0] == "0.0.0.0"
+    finally:
+        httpd.server_close()

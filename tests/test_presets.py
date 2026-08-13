@@ -81,7 +81,7 @@ def test_ignores_unknown_blocks(tmp_path):
 
 def test_shipped_preset_loads():
     from pathlib import Path
-    preset = load_preset(Path("presets/real_saturday.yaml"))
+    preset = load_preset(Path("presets/sample_preset.yaml"))
     assert preset.caption.text
     assert preset.output.height == 480
 

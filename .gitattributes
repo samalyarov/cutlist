@@ -1,0 +1,13 @@
+# Normalise on checkin, LF in the repository. Development happens on Windows
+# and publishing happens to GitHub; without this, line endings eventually
+# produce a diff that means nothing.
+* text=auto eol=lf
+
+# Binary, never normalised.
+*.mp4 binary
+*.mkv binary
+*.mov binary
+*.webm binary
+*.jpg binary
+*.png binary
+*.sqlite binary

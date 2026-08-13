@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 from typer.testing import CliRunner
 
@@ -11,40 +12,40 @@ from cutlist.shell import ToolError
 runner = CliRunner()
 
 
-def test_probe_command_reports_dimensions(fixture_film):
-    result = runner.invoke(app, ["probe", str(fixture_film)])
+def test_probe_command_reports_dimensions(fixture_video):
+    result = runner.invoke(app, ["probe", str(fixture_video)])
     assert result.exit_code == 0
     assert "320x240" in result.stdout
 
 
-def test_shots_command_counts_shots(fixture_film):
-    result = runner.invoke(app, ["shots", str(fixture_film)])
+def test_shots_command_counts_shots(fixture_video):
+    result = runner.invoke(app, ["shots", str(fixture_video)])
     assert result.exit_code == 0
     assert "6 shots" in result.stdout
 
 
-def test_shots_command_can_emit_json(fixture_film):
-    result = runner.invoke(app, ["shots", str(fixture_film), "--json"])
+def test_shots_command_can_emit_json(fixture_video):
+    result = runner.invoke(app, ["shots", str(fixture_video), "--json"])
     assert result.exit_code == 0
     shots = json.loads(result.stdout)
     assert len(shots) == 6
     assert {"index", "start", "end"} <= shots[0].keys()
 
 
-def test_shots_command_succeeds_on_a_cut_free_film(cutfree_film):
+def test_shots_command_succeeds_on_a_cut_free_video(cutfree_video):
     # Used to IndexError on lengths[len(lengths) // 2] because detect_shots
     # returned [] for a video with no cuts -- an unhandled crash rather than
     # the clean `error:` line this command boundary exists to guarantee.
-    result = runner.invoke(app, ["shots", str(cutfree_film)])
+    result = runner.invoke(app, ["shots", str(cutfree_video)])
     assert result.exit_code == 0, result.output
     assert "1 shots" in result.stdout
     assert "Traceback" not in result.output
 
 
-def test_draft_writes_playable_clips(fixture_film, tmp_path):
+def test_draft_writes_playable_clips(fixture_video, tmp_path):
     result = runner.invoke(app, [
-        "draft", str(fixture_film),
-        "--preset", "presets/real_saturday.yaml",
+        "draft", str(fixture_video),
+        "--preset", "presets/sample_preset.yaml",
         "--count", "2",
         "--root", str(tmp_path),
         "--seed", "0",
@@ -54,7 +55,7 @@ def test_draft_writes_playable_clips(fixture_film, tmp_path):
     # "1" is the run id: a fresh workspace means this draft opens run 1, and
     # each run gets its own output directory.
     clips = sorted(
-        (tmp_path / "output" / fixture_film.stem / "real_saturday" / "1").glob("*.mp4")
+        (tmp_path / "output" / fixture_video.stem / "sample_preset" / "1").glob("*.mp4")
     )
     assert len(clips) == 2
     for clip in clips:
@@ -64,10 +65,31 @@ def test_draft_writes_playable_clips(fixture_film, tmp_path):
         assert 9.0 <= info.duration <= 15.5
 
 
-def test_draft_caption_override_is_accepted(fixture_film, tmp_path):
+def test_draft_clips_returns_the_run_scoped_output_directory(tmp_path, fixture_video):
+    from cutlist.cli import _draft_clips
+    from cutlist.db.schema import connect
+    from cutlist.paths import Workspace
+    from cutlist.presets import load_preset
+
+    preset_path = Path("presets/sample_preset.yaml")
+    spec = load_preset(preset_path)
+    workspace = Workspace(root=tmp_path)
+    conn = connect(workspace.database)
+
+    destination = _draft_clips(
+        conn, video=fixture_video, spec=spec, workspace=workspace,
+        count=1, seed=7, preset_path=preset_path,
+    )
+
+    run_id = conn.execute("SELECT id FROM run").fetchone()[0]
+    assert destination == workspace.output / fixture_video.stem / spec.name / str(run_id)
+    assert (destination / "01.mp4").exists()
+
+
+def test_draft_caption_override_is_accepted(fixture_video, tmp_path):
     result = runner.invoke(app, [
-        "draft", str(fixture_film),
-        "--preset", "presets/real_saturday.yaml",
+        "draft", str(fixture_video),
+        "--preset", "presets/sample_preset.yaml",
         "--caption", "ДРУГОЙ ТЕКСТ",
         "--count", "1",
         "--root", str(tmp_path),
@@ -77,13 +99,9 @@ def test_draft_caption_override_is_accepted(fixture_film, tmp_path):
     assert "ДРУГОЙ ТЕКСТ" in result.stdout
 
 
-def test_draft_caption_pngs_do_not_collide_across_runs(fixture_film, tmp_path, monkeypatch):
-    # caption.png used to live at cache_for(film) / "caption.png", keyed on
-    # the film alone. Two runs of the same film with different captions
-    # would both reach for that one path, and the later render_caption call
-    # would overwrite the PNG the earlier run's still-encoding segments were
-    # reading from. Scoping it under each run's own (uuid-tagged) scratch
-    # root means the two runs never touch the same file.
+def test_draft_caption_pngs_do_not_collide_across_runs(fixture_video, tmp_path, monkeypatch):
+    # caption.png is keyed per run, not per video: concurrent drafts of the
+    # same video with different captions must not overwrite each other's PNG.
     seen_paths = []
     original = cli.render_caption
 
@@ -95,8 +113,8 @@ def test_draft_caption_pngs_do_not_collide_across_runs(fixture_film, tmp_path, m
 
     for text in ("FIRST CAPTION", "SECOND CAPTION"):
         result = runner.invoke(app, [
-            "draft", str(fixture_film),
-            "--preset", "presets/real_saturday.yaml",
+            "draft", str(fixture_video),
+            "--preset", "presets/sample_preset.yaml",
             "--caption", text,
             "--count", "1",
             "--root", str(tmp_path),
@@ -106,37 +124,37 @@ def test_draft_caption_pngs_do_not_collide_across_runs(fixture_film, tmp_path, m
 
     assert len(seen_paths) == 2
     assert seen_paths[0] != seen_paths[1]
-    shared_path = cli.Workspace(root=tmp_path).cache_for(fixture_film) / "caption.png"
+    shared_path = cli.Workspace(root=tmp_path).cache_for(fixture_video) / "caption.png"
     assert shared_path not in seen_paths
 
 
-def test_missing_film_exits_nonzero(tmp_path):
+def test_missing_video_exits_nonzero(tmp_path):
     result = runner.invoke(app, ["probe", str(tmp_path / "nope.mp4")])
     assert result.exit_code != 0
     assert "error: no such file" in result.output
     assert "Traceback" not in result.output
 
 
-def test_shots_missing_film_exits_nonzero_with_clean_error(tmp_path):
+def test_shots_missing_video_exits_nonzero_with_clean_error(tmp_path):
     result = runner.invoke(app, ["shots", str(tmp_path / "nope.mp4")])
     assert result.exit_code != 0
     assert "error: no such file" in result.output
     assert "Traceback" not in result.output
 
 
-def test_draft_missing_film_exits_nonzero_with_clean_error(tmp_path):
+def test_draft_missing_video_exits_nonzero_with_clean_error(tmp_path):
     result = runner.invoke(app, [
         "draft", str(tmp_path / "nope.mp4"),
-        "--preset", "presets/real_saturday.yaml",
+        "--preset", "presets/sample_preset.yaml",
     ])
     assert result.exit_code != 0
     assert "error: no such file" in result.output
     assert "Traceback" not in result.output
 
 
-def test_draft_missing_preset_reports_clean_error(fixture_film, tmp_path):
+def test_draft_missing_preset_reports_clean_error(fixture_video, tmp_path):
     result = runner.invoke(app, [
-        "draft", str(fixture_film),
+        "draft", str(fixture_video),
         "--preset", str(tmp_path / "nope.yaml"),
     ])
     assert result.exit_code != 0
@@ -144,25 +162,25 @@ def test_draft_missing_preset_reports_clean_error(fixture_film, tmp_path):
     assert "Traceback" not in result.output
 
 
-def test_draft_malformed_preset_reports_clean_error(fixture_film, tmp_path):
+def test_draft_malformed_preset_reports_clean_error(fixture_video, tmp_path):
     bad_preset = tmp_path / "bad.yaml"
     bad_preset.write_text("caption:\n  text: ''\n", encoding="utf-8")
 
-    result = runner.invoke(app, ["draft", str(fixture_film), "--preset", str(bad_preset)])
+    result = runner.invoke(app, ["draft", str(fixture_video), "--preset", str(bad_preset)])
     assert result.exit_code != 0
     assert "error:" in result.output
     assert "Traceback" not in result.output
 
 
-def test_draft_font_error_reports_clean_error(fixture_film, tmp_path, monkeypatch):
+def test_draft_font_error_reports_clean_error(fixture_video, tmp_path, monkeypatch):
     def boom(*args, **kwargs):
         raise FontError("no usable font found")
 
     monkeypatch.setattr(cli, "render_caption", boom)
 
     result = runner.invoke(app, [
-        "draft", str(fixture_film),
-        "--preset", "presets/real_saturday.yaml",
+        "draft", str(fixture_video),
+        "--preset", "presets/sample_preset.yaml",
         "--root", str(tmp_path),
     ])
     assert result.exit_code != 0
@@ -170,7 +188,7 @@ def test_draft_font_error_reports_clean_error(fixture_film, tmp_path, monkeypatc
     assert "Traceback" not in result.output
 
 
-def test_draft_reports_partial_progress_on_mid_loop_failure(fixture_film, tmp_path, monkeypatch):
+def test_draft_reports_partial_progress_on_mid_loop_failure(fixture_video, tmp_path, monkeypatch):
     original = cli.render_clip
     calls = {"n": 0}
 
@@ -183,8 +201,8 @@ def test_draft_reports_partial_progress_on_mid_loop_failure(fixture_film, tmp_pa
     monkeypatch.setattr(cli, "render_clip", flaky)
 
     result = runner.invoke(app, [
-        "draft", str(fixture_film),
-        "--preset", "presets/real_saturday.yaml",
+        "draft", str(fixture_video),
+        "--preset", "presets/sample_preset.yaml",
         "--count", "3",
         "--root", str(tmp_path),
         "--seed", "0",
@@ -207,3 +225,73 @@ def test_draft_help_lists_all_options():
     assert result.exit_code == 0
     for opt in ("--preset", "--count", "--caption", "--root", "--seed"):
         assert opt in result.stdout
+
+
+def _scratch_dirs(root: Path) -> list[Path]:
+    return sorted((root / "cache").rglob("scratch_*"))
+
+
+def test_draft_leaves_no_scratch_directory_behind(fixture_video, tmp_path):
+    """Every draft used to leak cache/<stem>__<hash>/scratch_<8hex>/caption.png.
+
+    render_clip clears its own per-ordinal subdirectory, so nothing removed
+    the run-scoped root the caption PNG sits in.
+    """
+    result = runner.invoke(app, [
+        "draft", str(fixture_video),
+        "--preset", "presets/sample_preset.yaml",
+        "--count", "2", "--root", str(tmp_path), "--seed", "0",
+    ])
+
+    assert result.exit_code == 0, result.stdout
+    assert _scratch_dirs(tmp_path) == []
+
+
+def test_draft_leaves_no_scratch_directory_behind_when_it_fails(
+    fixture_video, tmp_path, monkeypatch
+):
+    """The failure path is the one that leaks repeatedly: a user retrying a
+    broken draft accumulates a scratch directory per attempt.
+    """
+    def failing(*args, **kwargs):
+        raise ToolError("ffmpeg blew up")
+
+    monkeypatch.setattr(cli, "render_clip", failing)
+
+    result = runner.invoke(app, [
+        "draft", str(fixture_video),
+        "--preset", "presets/sample_preset.yaml",
+        "--count", "1", "--root", str(tmp_path), "--seed", "0",
+    ])
+
+    assert result.exit_code != 0
+    assert _scratch_dirs(tmp_path) == []
+
+
+def test_review_blames_the_host_when_the_host_is_what_is_wrong(tmp_path):
+    """`--host not-a-host` reported `cannot bind port 8731`, sending the user
+    to fix the one part of the command that was fine.
+    """
+    result = runner.invoke(app, [
+        "review", "--root", str(tmp_path), "--host", "not-a-host", "--no-open",
+    ])
+
+    assert result.exit_code == 1
+    assert "not-a-host" in result.output
+    assert "cannot bind port" not in result.output
+
+
+def test_the_module_can_be_run_directly():
+    """`python -m cutlist.cli` exited 0 having printed nothing, which reads
+    like a command that ran and found nothing to say.
+    """
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [sys.executable, "-m", "cutlist.cli", "--help"],
+        capture_output=True, text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "Assemble short captioned clips" in result.stdout

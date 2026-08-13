@@ -6,11 +6,11 @@ from pathlib import Path
 CHUNK = 1 << 20
 
 
-def film_id(path: Path) -> str:
-    """Identify a film by size plus its first and last megabyte.
+def video_id(path: Path) -> str:
+    """Identify a video by size plus its first and last megabyte.
 
     Hashing the whole file would mean reading gigabytes just to look something
-    up in the cache. Size plus both ends is enough to tell films apart while
+    up in the cache. Size plus both ends is enough to tell videos apart while
     staying stable when the file is renamed or moved.
     """
     size = path.stat().st_size
@@ -30,6 +30,18 @@ def film_id(path: Path) -> str:
     return digest.hexdigest()
 
 
+def resolve_within(root: Path, relative: str) -> Path | None:
+    """Join a workspace-relative path, refusing to leave the workspace.
+
+    `relative` comes from `clip.path` in the database. Nothing enforces that a
+    writer put a relative path there, so an absolute path or a `..` segment
+    must not gain filesystem access outside root.
+    """
+    resolved_root = Path(root).resolve()
+    candidate = (Path(root) / relative).resolve()
+    return candidate if candidate.is_relative_to(resolved_root) else None
+
+
 @dataclass(frozen=True)
 class Workspace:
     """Where cutlist keeps things, split by what invalidates each directory."""
@@ -45,29 +57,24 @@ class Workspace:
         return self.root / "cache"
 
     @property
-    def work(self) -> Path:
-        return self.root / "work"
-
-    @property
     def output(self) -> Path:
         return self.root / "output"
 
-    def cache_for(self, film: Path) -> Path:
-        path = self.cache / f"{film.stem}__{film_id(film)}"
+    def cache_for(self, video: Path) -> Path:
+        path = self.cache / f"{video.stem}__{video_id(video)}"
         path.mkdir(parents=True, exist_ok=True)
         return path
 
-    def output_for(self, film: Path, preset_name: str, run_id: int) -> Path:
+    def output_for(self, video: Path, preset_name: str, run_id: int) -> Path:
         """Where one run's clips are written.
 
-        Scoped by run_id, not just film+preset: clips are named by ordinal
-        (`01.mp4`, `02.mp4`, ...), so drafting the same film and preset twice
-        used to overwrite the first run's files while its `clip` rows kept
-        claiming those paths. A rating then attached to footage that was no
-        longer in the file. One directory per run makes a clip path name
-        exactly one assembly.
+        Scoped by run_id because clips are named by ordinal (`01.mp4`, ...):
+        without it, re-drafting the same video and preset would overwrite an
+        earlier run's files while its `clip` rows still claimed those paths,
+        attaching ratings to footage no longer in the file. One directory per
+        run makes a clip path name exactly one assembly.
         """
-        path = self.output / film.stem / preset_name / str(run_id)
+        path = self.output / video.stem / preset_name / str(run_id)
         path.mkdir(parents=True, exist_ok=True)
         return path
 
@@ -76,7 +83,7 @@ class Workspace:
         """The ratings store.
 
         Deliberately at the workspace root rather than under cache/: taste
-        generalises across films, and the cache is regenerable. Deleting it
+        generalises across videos, and the cache is regenerable. Deleting it
         must not destroy a month of judgements.
         """
         return self.root / "cutlist.sqlite"

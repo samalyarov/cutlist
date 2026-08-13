@@ -1,7 +1,7 @@
-name: real_saturday
+name: sample_preset
 
 caption:
-  text: "ЗАВТРА РИЛ СУББОТА"
+  text: "SAMPLE CAPTION"
   position: top_center
   size_frac: 0.125
   fill: "#FFFFFF"

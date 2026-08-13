@@ -14,20 +14,25 @@ class SegmentRecord:
     Both spans are kept because they are different claims: the segment is
     what was on screen and judged, the shot is the take it belongs to. Neither
     can be recovered from the other after the fact.
+
+    The thumbnail is captured at draft time, from the source video, so a mark
+    stays legible after the source is gone -- a frame from a deleted file
+    cannot be recovered by any later change.
     """
 
-    film_hash: str
+    video_hash: str
     seg_start_s: float
     seg_end_s: float
     shot_start_s: float
     shot_end_s: float
     shot_index: int | None = None
+    thumbnail: bytes | None = None
 
 
-def record_film(
+def record_video(
     conn: sqlite3.Connection,
     *,
-    film_hash: str,
+    video_hash: str,
     display_name: str,
     duration_s: float | None = None,
     fps: float | None = None,
@@ -39,18 +44,18 @@ def record_film(
     with conn:
         conn.execute(
             """
-            INSERT INTO film (film_hash, display_name, duration_s, fps, width, height,
-                              first_seen_at, last_seen_at)
+            INSERT INTO video (video_hash, display_name, duration_s, fps, width, height,
+                               first_seen_at, last_seen_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT (film_hash) DO UPDATE SET
+            ON CONFLICT (video_hash) DO UPDATE SET
                 display_name = excluded.display_name,
-                duration_s   = COALESCE(excluded.duration_s, film.duration_s),
-                fps          = COALESCE(excluded.fps, film.fps),
-                width        = COALESCE(excluded.width, film.width),
-                height       = COALESCE(excluded.height, film.height),
+                duration_s   = COALESCE(excluded.duration_s, video.duration_s),
+                fps          = COALESCE(excluded.fps, video.fps),
+                width        = COALESCE(excluded.width, video.width),
+                height       = COALESCE(excluded.height, video.height),
                 last_seen_at = excluded.last_seen_at
             """,
-            (film_hash, display_name, duration_s, fps, width, height, now, now),
+            (video_hash, display_name, duration_s, fps, width, height, now, now),
         )
 
 
@@ -63,7 +68,7 @@ def start_run(
     caption_text: str,
     seed: int,
     cutlist_version: str,
-    film_hashes: list[str],
+    video_hashes: list[str],
 ) -> int:
     """Open a run and record which sources it was pointed at.
 
@@ -82,8 +87,8 @@ def start_run(
         )
         run_id = int(cursor.lastrowid)
         conn.executemany(
-            "INSERT OR IGNORE INTO run_film (run_id, film_hash) VALUES (?, ?)",
-            [(run_id, film_hash) for film_hash in film_hashes],
+            "INSERT OR IGNORE INTO run_video (run_id, video_hash) VALUES (?, ?)",
+            [(run_id, video_hash) for video_hash in video_hashes],
         )
     return run_id
 
@@ -98,6 +103,7 @@ def record_clip(
     segments: list[SegmentRecord],
 ) -> int:
     """Record one rendered clip and everything it was assembled from."""
+    now = _now()
     with conn:
         cursor = conn.execute(
             "INSERT INTO clip (run_id, ordinal, path, duration_s) VALUES (?, ?, ?, ?)",
@@ -106,15 +112,31 @@ def record_clip(
         clip_id = int(cursor.lastrowid)
         conn.executemany(
             """
-            INSERT INTO segment (clip_id, position, film_hash, seg_start_s, seg_end_s,
+            INSERT INTO segment (clip_id, position, video_hash, seg_start_s, seg_end_s,
                                  shot_start_s, shot_end_s, shot_index)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
-                (clip_id, position, s.film_hash, s.seg_start_s, s.seg_end_s,
+                (clip_id, position, s.video_hash, s.seg_start_s, s.seg_end_s,
                  s.shot_start_s, s.shot_end_s, s.shot_index)
                 for position, s in enumerate(segments)
             ],
+        )
+        images = [
+            (row["id"], segment.thumbnail, now)
+            for row, segment in zip(
+                conn.execute(
+                    "SELECT id FROM segment WHERE clip_id = ? ORDER BY position",
+                    (clip_id,),
+                ).fetchall(),
+                segments,
+            )
+            if segment.thumbnail is not None
+        ]
+        conn.executemany(
+            "INSERT INTO segment_thumbnail (segment_id, image, captured_at) "
+            "VALUES (?, ?, ?)",
+            images,
         )
     return clip_id
 
@@ -166,11 +188,11 @@ def mark_shot(
     with conn:
         cursor = conn.execute(
             """
-            INSERT INTO shot_rating (film_hash, seg_start_s, seg_end_s, shot_start_s,
+            INSERT INTO shot_rating (video_hash, seg_start_s, seg_end_s, shot_start_s,
                                      shot_end_s, mark, segment_id, note, created_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (segment["film_hash"], segment["seg_start_s"], segment["seg_end_s"],
+            (segment["video_hash"], segment["seg_start_s"], segment["seg_end_s"],
              segment["shot_start_s"], segment["shot_end_s"], mark, segment_id, note, _now()),
         )
     return int(cursor.lastrowid)
@@ -198,7 +220,7 @@ def clip_by_path(conn: sqlite3.Connection, path: str) -> sqlite3.Row | None:
 def clips_for_review(
     conn: sqlite3.Connection,
     *,
-    film: str | None = None,
+    video: str | None = None,
     preset: str | None = None,
     unrated_only: bool = True,
 ) -> list[dict]:
@@ -217,12 +239,12 @@ def clips_for_review(
     if preset is not None:
         sql += " AND run.preset_name = ?"
         params.append(preset)
-    if film is not None:
+    if video is not None:
         sql += """ AND EXISTS (
-            SELECT 1 FROM clip_film
-            WHERE clip_film.clip_id = clip.id AND clip_film.film_hash = ?
+            SELECT 1 FROM clip_video
+            WHERE clip_video.clip_id = clip.id AND clip_video.video_hash = ?
         )"""
-        params.append(film)
+        params.append(video)
     if unrated_only:
         sql += f" AND ({_LATEST_VERDICT}) IS NULL"
     sql += " ORDER BY run.created_at DESC, clip.ordinal ASC"
@@ -235,7 +257,7 @@ def clip_detail(conn: sqlite3.Connection, clip_id: int) -> dict | None:
     row = conn.execute(
         f"""
         SELECT clip.id, clip.ordinal, clip.path, clip.duration_s,
-               run.preset_name, run.caption_text, run.seed,
+               run.preset_name, run.caption_text, run.seed, run.preset_json,
                ({_LATEST_VERDICT}) AS verdict
         FROM clip JOIN run ON run.id = clip.run_id
         WHERE clip.id = ?
@@ -247,12 +269,12 @@ def clip_detail(conn: sqlite3.Connection, clip_id: int) -> dict | None:
 
     segments = conn.execute(
         f"""
-        SELECT segment.id, segment.position, segment.film_hash,
+        SELECT segment.id, segment.position, segment.video_hash,
                segment.seg_start_s, segment.seg_end_s,
                segment.shot_start_s, segment.shot_end_s, segment.shot_index,
-               film.display_name,
+               video.display_name,
                ({_LATEST_MARK}) AS mark
-        FROM segment JOIN film ON film.film_hash = segment.film_hash
+        FROM segment JOIN video ON video.video_hash = segment.video_hash
         WHERE segment.clip_id = ?
         ORDER BY segment.position
         """,
@@ -274,9 +296,31 @@ def segment_by_id(conn: sqlite3.Connection, segment_id: int) -> sqlite3.Row | No
     return conn.execute("SELECT * FROM segment WHERE id = ?", (segment_id,)).fetchone()
 
 
-def film_display_name(conn: sqlite3.Connection, film_hash: str) -> str | None:
+def record_thumbnail(conn: sqlite3.Connection, *, segment_id: int, image: bytes) -> None:
+    """Store a segment's thumbnail, replacing any already held.
+
+    Used by the review server to persist a thumbnail generated on the fallback
+    path, so a segment recorded before thumbnails existed pays for it once.
+    """
+    with conn:
+        conn.execute(
+            "INSERT INTO segment_thumbnail (segment_id, image, captured_at) "
+            "VALUES (?, ?, ?) ON CONFLICT (segment_id) DO UPDATE SET "
+            "image = excluded.image, captured_at = excluded.captured_at",
+            (segment_id, image, _now()),
+        )
+
+
+def segment_thumbnail(conn: sqlite3.Connection, segment_id: int) -> bytes | None:
     row = conn.execute(
-        "SELECT display_name FROM film WHERE film_hash = ?", (film_hash,)
+        "SELECT image FROM segment_thumbnail WHERE segment_id = ?", (segment_id,)
+    ).fetchone()
+    return None if row is None else row["image"]
+
+
+def video_display_name(conn: sqlite3.Connection, video_hash: str) -> str | None:
+    row = conn.execute(
+        "SELECT display_name FROM video WHERE video_hash = ?", (video_hash,)
     ).fetchone()
     return None if row is None else row["display_name"]
 
@@ -287,7 +331,7 @@ def summary(conn: sqlite3.Connection) -> dict:
         return {row[0]: row[1] for row in conn.execute(sql)}
 
     return {
-        "films": conn.execute("SELECT COUNT(*) FROM film").fetchone()[0],
+        "videos": conn.execute("SELECT COUNT(*) FROM video").fetchone()[0],
         "runs": conn.execute("SELECT COUNT(*) FROM run").fetchone()[0],
         "clips": conn.execute("SELECT COUNT(*) FROM clip").fetchone()[0],
         "segments": conn.execute("SELECT COUNT(*) FROM segment").fetchone()[0],

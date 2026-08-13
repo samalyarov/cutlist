@@ -1,0 +1,39 @@
+.git
+.github
+.venv
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.tox
+.coverage
+.claude
+.superpowers
+docs
+tests
+input
+output
+cache
+work
+references
+*.egg-info
+__pycache__
+
+# Extension-based rather than directory-based: a stray source video or
+# subtitle file left outside the workspace directories above is exactly the
+# case this is meant to catch, and it costs gigabytes per build, uncompressed,
+# if it silently rides along in the build context.
+*.mp4
+*.mkv
+*.avi
+*.mov
+*.webm
+*.m4v
+*.gif
+*.srt
+*.ass
+*.vtt
+*.sqlite*
+
+# Presets are personal; only the sample ships.
+presets/*
+!presets/sample_preset.yaml

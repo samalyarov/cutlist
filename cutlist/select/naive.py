@@ -7,7 +7,7 @@ from cutlist.presets import RhythmSpec
 
 
 class NotEnoughFootage(RuntimeError):
-    """The film has too few usable shots to fill an assembly."""
+    """The video has too few usable shots to fill an assembly."""
 
 
 # A single random count-and-sample can land on a pool that happens to have no
@@ -89,9 +89,9 @@ def _fit_total(
     total = sum(durations)
 
     if total > rhythm.max_total:
-        durations = _redistribute(durations, rhythm.max_total, rhythm.min_seconds, shrink=True)
+        durations = _shrink_toward(durations, rhythm.max_total, rhythm.min_seconds)
     elif total < rhythm.min_total:
-        durations = _redistribute(durations, rhythm.min_total, ceilings, shrink=False)
+        durations = _grow_toward(durations, rhythm.min_total, ceilings)
 
     total = sum(durations)
     if not rhythm.min_total - 1e-6 <= total <= rhythm.max_total + 1e-6:
@@ -99,21 +99,41 @@ def _fit_total(
     return durations
 
 
-def _redistribute(durations, target, bound, *, shrink):
-    """Move every segment toward its bound in proportion to its slack."""
-    bounds = bound if isinstance(bound, list) else [bound] * len(durations)
-    slack = [
-        (d - b) if shrink else (b - d)
-        for d, b in zip(durations, bounds)
-    ]
-    available = sum(slack)
-    needed = abs(sum(durations) - target)
+def _shrink_toward(durations: list[float], target: float, floor: float) -> list[float]:
+    """Shorten every segment toward a shared floor, in proportion to its slack.
 
+    Proportional rather than equal: taking the same amount from every segment
+    would push the already-short ones under the floor first.
+    """
+    slack = [duration - floor for duration in durations]
+    return _apply(durations, slack, sum(durations) - target, sign=-1)
+
+
+def _grow_toward(
+    durations: list[float], target: float, ceilings: list[float]
+) -> list[float]:
+    """Lengthen every segment toward its own ceiling, in proportion to its slack.
+
+    Ceilings are per-segment because a segment can never outgrow the shot it
+    was cut from, and shots differ in length.
+    """
+    slack = [ceiling - duration for duration, ceiling in zip(durations, ceilings)]
+    return _apply(durations, slack, target - sum(durations), sign=1)
+
+
+def _apply(
+    durations: list[float], slack: list[float], needed: float, *, sign: int
+) -> list[float]:
+    """Spend `needed` seconds across the segments, capped by available slack.
+
+    When the slack cannot cover what is needed, every segment lands exactly on
+    its bound and the caller's range check rejects the draw.
+    """
+    available = sum(slack)
     if available <= 0:
         return durations
-
     share = min(1.0, needed / available)
     return [
-        d - slack[i] * share if shrink else d + slack[i] * share
-        for i, d in enumerate(durations)
+        duration + sign * portion * share
+        for duration, portion in zip(durations, slack)
     ]

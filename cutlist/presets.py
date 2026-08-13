@@ -101,6 +101,21 @@ def _rhythm(block: dict) -> RhythmSpec:
         raise PresetError(f"rhythm is missing {exc}") from exc
 
 
+def preset_from_dict(data: dict) -> Preset:
+    """Rebuild a Preset from the JSON a run recorded.
+
+    The counterpart to `dataclasses.asdict` in cli._preset_fingerprint: a run
+    stores its fully resolved preset so a clip can be re-cut after the YAML has
+    been edited or deleted.
+    """
+    return Preset(
+        name=data["name"],
+        caption=CaptionSpec(**data["caption"]),
+        rhythm=RhythmSpec(**data["rhythm"]),
+        output=OutputSpec(**data["output"]),
+    )
+
+
 def _validate(rhythm: RhythmSpec) -> None:
     if rhythm.min_segments > rhythm.max_segments:
         raise PresetError("rhythm.segments.min exceeds segments.max")
