@@ -1,4 +1,5 @@
 import shutil
+from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
@@ -6,8 +7,11 @@ from typer.testing import CliRunner
 from cutlist.cli import app
 from cutlist.db import store
 from cutlist.db.schema import connect
-from cutlist.presets import load_preset, preset_from_dict
+from cutlist.media.caption import render_caption
+from cutlist.media.render import Segment, render_clip
+from cutlist.presets import OutputSpec, load_preset, preset_from_dict
 from cutlist.rebuild import RebuildError, rebuild_clip
+from cutlist.shell import ToolError
 
 
 @pytest.fixture
@@ -30,7 +34,7 @@ def drafted(tmp_path, fixture_video):
 def test_preset_from_dict_round_trips_a_serialised_preset():
     from dataclasses import asdict
 
-    original = load_preset("presets/sample_preset.yaml")
+    original = load_preset(Path("presets/sample_preset.yaml"))
     assert preset_from_dict(asdict(original)) == original
 
 
@@ -84,6 +88,9 @@ def test_the_rerendered_clip_keeps_its_ratings(drafted):
 
     rebuild_clip(conn, root=root, clip_id=clip_id)
 
+    # Both halves, or the test passes on a rebuild that wrote nothing: the
+    # verdict survives trivially if the file was never restored.
+    assert path.exists()
     assert store.clip_detail(conn, clip_id)["verdict"] == "fire"
 
 
@@ -105,3 +112,71 @@ def test_the_rerender_command_reports_an_unknown_clip(tmp_path):
     )
     assert result.exit_code == 1
     assert "no recorded clip" in result.output
+
+
+def _reencode_over(source: Path, seconds: float) -> None:
+    """Replace a source in place with different bytes under the same name.
+
+    Not contrived: the container's ffmpeg and the host's build the demo source
+    to different bytes, so drafting in Docker and rerendering natively reaches
+    this by following the README.
+    """
+    from cutlist.shell import run
+
+    run([
+        "ffmpeg", "-y", "-v", "error",
+        "-f", "lavfi", "-i", f"color=c=0x0000FF:s=320x240:d={seconds}:r=25",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", str(source),
+    ])
+
+
+def test_rerender_refuses_a_source_that_only_matches_by_name(drafted):
+    """A same-named different video would put unwatched footage under a verdict.
+
+    find_source will happily fall back to the display name -- useful for a
+    thumbnail, wrong here -- so the strength of the match has to be checked.
+    """
+    root, conn, clip_id, path = drafted
+    store.rate_clip(conn, clip_id=clip_id, verdict="fire")
+    before = path.read_bytes()
+    _reencode_over(root / "input" / "fixture.mp4", seconds=30.0)
+
+    with pytest.raises(RebuildError, match="right name.*not the right content"):
+        rebuild_clip(conn, root=root, clip_id=clip_id)
+
+    assert path.read_bytes() == before
+
+
+def test_a_refused_rerender_does_not_destroy_the_rated_clip(drafted):
+    """C1: the rebuild fails deep in ffmpeg, after dest would once have been unlinked.
+
+    A source too short for the recorded segments encodes to parts with no
+    stream, which concat cannot open an output from. The rated clip has to
+    survive that intact -- `rate`'s own advice on a missing clip is to
+    rerender it, so destroying it here leaves no way back.
+    """
+    root, conn, clip_id, path = drafted
+    store.rate_clip(conn, clip_id=clip_id, verdict="fire")
+    before = path.read_bytes()
+
+    # Same content hash is impossible to fake, so reach concat directly with
+    # the source the record names, truncated to nothing useful.
+    source = root / "input" / "fixture.mp4"
+    detail = store.clip_detail(conn, clip_id)
+    segments = [
+        Segment(s["seg_start_s"], s["seg_end_s"] - s["seg_start_s"])
+        for s in detail["segments"]
+    ]
+    _reencode_over(source, seconds=0.5)
+
+    with pytest.raises(ToolError):
+        render_clip(
+            source, segments,
+            render_caption(
+                load_preset(Path("presets/sample_preset.yaml")).caption,
+                OutputSpec(), root / "cap.png",
+            ),
+            OutputSpec(), path, root / "scratch",
+        )
+
+    assert path.read_bytes() == before

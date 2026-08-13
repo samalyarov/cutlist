@@ -18,7 +18,10 @@ def rebuild_clip(conn, *, root: Path, clip_id: int) -> Path:
     """Re-cut a clip from what the database recorded about it.
 
     Written back to the path `clip.path` already claims, so the ratings
-    attached to that clip still describe what is now on disk.
+    attached to that clip still describe what is now on disk. That only holds
+    if the footage is the same footage, so the source is required to match by
+    content hash: a file carrying the recorded name but different bytes is
+    refused rather than rendered over a clip that already has a verdict.
 
     Perceptually identical to the original, not byte-identical: different
     ffmpeg and x264 builds produce different bytes from the same input.
@@ -36,11 +39,21 @@ def rebuild_clip(conn, *, root: Path, clip_id: int) -> Path:
         )
 
     video_hash = hashes.pop()
-    source = find_source(root, video_hash, segments[0]["display_name"])
-    if source is None:
+    display_name = segments[0]["display_name"]
+    match = find_source(root, video_hash, display_name)
+    if match is None:
         raise RebuildError(
-            f"source video not found for {segments[0]['display_name']!r} "
+            f"source video not found for {display_name!r} "
             f"({video_hash[:12]}); put it back under input/ and try again"
+        )
+    if not match.by_hash:
+        # A display-name match is enough to show a thumbnail and nowhere near
+        # enough to rebuild. Rendering it over dest would put footage nobody
+        # has watched under a verdict somebody already gave.
+        raise RebuildError(
+            f"the file at {match.path} has the right name for {display_name!r} "
+            f"but not the right content ({video_hash[:12]}); rebuilding from it "
+            f"would not reproduce what was rated, so nothing was written"
         )
 
     dest = resolve_within(root, detail["path"])
@@ -56,7 +69,7 @@ def rebuild_clip(conn, *, root: Path, clip_id: int) -> Path:
             spec.caption, spec.output, scratch_root / "caption.png"
         )
         render_clip(
-            source,
+            match.path,
             [
                 Segment(
                     start=segment["seg_start_s"],

@@ -325,14 +325,101 @@ def test_thumbnail_is_served(server):
     assert body[:2] == b"\xff\xd8"
 
 
-def test_the_server_writes_no_sql_of_its_own():
+def _first_segment_id(server):
+    clips = json.loads(_get(f"{server}/api/clips")[1])
+    detail = json.loads(_get(f"{server}/api/clip/{clips[0]['id']}")[1])
+    return detail["segments"][0]["id"]
+
+
+def test_a_name_only_source_match_is_served_but_never_persisted(server, workspace):
+    """The `workspace` fixture records video_hash "abc" and puts an unrelated
+    file called fixture.mp4 under input/, which is precisely the shape this
+    guards: same name, different bytes.
+
+    Serving it keeps the segment strip legible. Persisting it would make a
+    frame from a video nobody drafted the permanent record of what was judged,
+    in the one artifact this release exists to protect -- and it fires exactly
+    on databases migrated from before thumbnails were captured, so it is the
+    common case there, not an edge.
+    """
+    segment_id = _first_segment_id(server)
+    conn = connect(workspace / "cutlist.sqlite")
+    assert store.segment_thumbnail(conn, segment_id) is None
+
+    status, body, _ = _get(f"{server}/media/thumb/{segment_id}")
+
+    assert status == 200 and body[:2] == b"\xff\xd8"
+    assert store.segment_thumbnail(conn, segment_id) is None
+
+
+def test_a_hash_matched_source_is_persisted_so_the_fallback_is_paid_once(
+    tmp_path, fixture_video
+):
+    """The other half of the asymmetry: a provable source is worth keeping."""
+    import shutil
+
+    from cutlist.paths import video_id
+
+    clip_dir = tmp_path / "output" / "fixture" / "p"
+    clip_dir.mkdir(parents=True)
+    shutil.copy(fixture_video, clip_dir / "01.mp4")
+    (tmp_path / "input").mkdir()
+    shutil.copy(fixture_video, tmp_path / "input" / "fixture.mp4")
+    video_hash = video_id(fixture_video)
+
+    conn = connect(tmp_path / "cutlist.sqlite")
+    store.record_video(conn, video_hash=video_hash, display_name="fixture.mp4")
+    run_id = store.start_run(
+        conn, preset_name="p", preset_sha256="sha", preset_json="{}",
+        caption_text="TEST", seed=1, cutlist_version="0.1.0",
+        video_hashes=[video_hash],
+    )
+    clip_id = store.record_clip(
+        conn, run_id=run_id, ordinal=1, path="output/fixture/p/01.mp4",
+        duration_s=2.0,
+        segments=[store.SegmentRecord(video_hash, 2.0, 4.0, 0.0, 5.0, 0)],
+    )
+    segment_id = store.clip_detail(conn, clip_id)["segments"][0]["id"]
+
+    httpd = build_server(root=tmp_path, port=0)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    try:
+        base = f"http://127.0.0.1:{httpd.server_address[1]}"
+        status, body, _ = _get(f"{base}/media/thumb/{segment_id}")
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+    assert status == 200
+    assert store.segment_thumbnail(conn, segment_id) == body
+
+
+def test_nothing_outside_the_store_writes_sql_of_its_own():
     """store.py is the only module that talks to the database.
 
     Two rating paths (web and CLI) only stay consistent if neither grows its
-    own queries, so this is asserted rather than left to review.
+    own queries, so this is asserted rather than left to review. Scanned over
+    the whole package rather than server.py alone: rebuild.py reads and
+    rewrites recorded clips and was never covered by the narrower check, and
+    the next module to grow a query will not be one anybody thought to add
+    here.
     """
     from pathlib import Path
 
-    source = Path("cutlist/review/server.py").read_text(encoding="utf-8")
-    for keyword in ("SELECT ", "INSERT ", "UPDATE ", "DELETE "):
-        assert keyword not in source, f"{keyword.strip()} found in server.py"
+    import cutlist
+
+    package = Path(cutlist.__file__).parent
+    exempt = {"db/store.py", "db/schema.py"}
+
+    scanned = 0
+    for module in sorted(package.rglob("*.py")):
+        relative = module.relative_to(package).as_posix()
+        if relative in exempt:
+            continue
+        scanned += 1
+        source = module.read_text(encoding="utf-8")
+        for keyword in ("SELECT ", "INSERT ", "UPDATE ", "DELETE "):
+            assert keyword not in source, f"{keyword.strip()} found in {relative}"
+
+    # Or a glob that quietly matched nothing would read as a clean pass.
+    assert scanned >= 10, f"only scanned {scanned} modules"

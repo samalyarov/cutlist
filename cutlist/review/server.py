@@ -5,9 +5,9 @@ from pathlib import Path
 
 from cutlist.db import store
 from cutlist.db.schema import connect
-from cutlist.media.sources import find_source
+from cutlist.media.sources import SourceMatch, find_source
 from cutlist.media.thumbs import thumbnail_bytes
-from cutlist.paths import resolve_within
+from cutlist.paths import Workspace, resolve_within
 
 PAGE = Path(__file__).with_name("page.html")
 
@@ -51,7 +51,7 @@ class ReviewHandler(BaseHTTPRequestHandler):
         return self.server.cutlist  # type: ignore[attr-defined]
 
     def _db(self):
-        return connect(self.config["root"] / "cutlist.sqlite")
+        return connect(Workspace(self.config["root"]).database)
 
     def _send_json(self, payload, status: int = 200) -> None:
         body = json.dumps(payload).encode("utf-8")
@@ -64,7 +64,7 @@ class ReviewHandler(BaseHTTPRequestHandler):
     def _send_error(self, status: int, message: str) -> None:
         self._send_json({"ok": False, "error": message}, status=status)
 
-    def _source_for(self, video_hash: str, conn) -> Path | None:
+    def _source_for(self, video_hash: str, conn) -> SourceMatch | None:
         """Locate the original video a segment was cut from."""
         return find_source(
             self.config["root"], video_hash, store.video_display_name(conn, video_hash)
@@ -201,18 +201,27 @@ class ReviewHandler(BaseHTTPRequestHandler):
 
         if image is None:
             # Recorded before thumbnails were captured at draft time. Generate
-            # from the source and keep it, so the fallback is paid once.
+            # from the source, and keep it when the source is provably the one
+            # that was drafted from, so the fallback is paid once.
             segment = store.segment_by_id(conn, segment_id)
             if segment is None:
                 self._send_error(404, "no such segment")
                 return
-            source = self._source_for(segment["video_hash"], conn)
-            if source is None:
+            match = self._source_for(segment["video_hash"], conn)
+            if match is None:
                 self._send_error(404, "source video not found")
                 return
             midpoint = (segment["seg_start_s"] + segment["seg_end_s"]) / 2
-            image = thumbnail_bytes(source, midpoint)
-            store.record_thumbnail(conn, segment_id=segment_id, image=image)
+            image = thumbnail_bytes(match.path, midpoint)
+            # Deliberately asymmetric: a display-name-only match is served but
+            # never stored. A frame from a same-named re-encode keeps the
+            # segment strip legible, which is all the page needs of it; writing
+            # it into the database would make unprovenanced bytes the permanent
+            # record of what was judged, in the one artifact here that cannot
+            # be regenerated. This path fires exactly on databases migrated
+            # from before thumbnails were captured, so it is not a rare case.
+            if match.by_hash:
+                store.record_thumbnail(conn, segment_id=segment_id, image=image)
 
         self.send_response(200)
         self.send_header("Content-Type", "image/jpeg")
