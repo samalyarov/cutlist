@@ -192,7 +192,7 @@ def _record_picks(
 
 def _draft_clips(
     conn, *, video: Path, spec, workspace: Workspace,
-    count: int, seed: int, preset_path: Path,
+    count: int, seed: int, preset_path: Path, keep_shots: bool = False,
 ) -> Path:
     """Detect shots, render `count` clips, and record what each was made of.
 
@@ -244,6 +244,18 @@ def _draft_clips(
                     root=workspace.root, picks=picks, video_hash=video_hash,
                     video=video,
                 )
+                if keep_shots:
+                    # The whole shots the picks came from, not the trimmed
+                    # picks themselves -- a shot is the same shot whichever run
+                    # found it, so the library keeps stable identities instead
+                    # of near-duplicates at slightly different in and out
+                    # points. Routed through extract_all so there is exactly
+                    # one way footage enters the library, and it skips whatever
+                    # is already there.
+                    extract_all(
+                        conn, video=video, workspace=workspace,
+                        shots=[pick.shot for pick in picks],
+                    )
             except (NotEnoughFootage, ToolError) as exc:
                 typer.echo(
                     f"wrote {written} of {count} clips; failed on {ordinal:02d}: {exc}",
@@ -274,6 +286,10 @@ def draft(
     caption: str | None = typer.Option(None, "--caption", help="Override the preset's text."),
     root: Path = typer.Option(Path("."), "--root", help="Workspace root."),
     seed: int | None = typer.Option(None, "--seed", help="Fix the RNG for reproducible drafts."),
+    keep_shots: bool = typer.Option(
+        False, "--keep-shots",
+        help="Also file the shots these clips were cut from into the library.",
+    ),
 ) -> None:
     """Cut clips using random shot selection, with no scoring or judging."""
     _require(video)
@@ -293,7 +309,7 @@ def draft(
     _draft_clips(
         connect(workspace.database),
         video=video, spec=spec, workspace=workspace,
-        count=count, seed=seed, preset_path=preset,
+        count=count, seed=seed, preset_path=preset, keep_shots=keep_shots,
     )
 
 
