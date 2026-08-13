@@ -19,7 +19,11 @@ def test_the_repository_carries_the_agpl():
     assert "GNU AFFERO GENERAL PUBLIC LICENSE" in text
     assert "Version 3, 19 November 2007" in text
     # The clause that makes AGPL differ from GPL: network use is distribution.
+    # The heading alone is not enough -- a corruption that stripped section
+    # 13's operative paragraphs but left the heading would still match it.
+    # Assert on the obligation itself, not just the section title.
     assert "remote network interaction" in text.lower()
+    assert "your modified version must prominently offer all users" in text
     assert "THERE IS NO WARRANTY FOR THE PROGRAM" in text
     assert "Sam Maliarov" in text
 
