@@ -11,6 +11,7 @@ from pathlib import Path
 
 import typer
 
+from cutlist.assemble import AssembleError, assemble_clips, parse_ids
 from cutlist.db import store
 from cutlist.db.schema import connect
 from cutlist.demo import build_demo_source
@@ -36,7 +37,7 @@ app = typer.Typer(help="Assemble short captioned clips from a long video.")
 # unguarded ffprobe parsing -- those are bugs and should look like bugs.
 HANDLED_ERRORS = (
     ToolError, PresetError, FontError, NotEnoughFootage, FileNotFoundError,
-    store.RatingError, store.RatingNotFound, RebuildError,
+    store.RatingError, store.RatingNotFound, RebuildError, AssembleError,
 )
 
 
@@ -372,6 +373,45 @@ def rate(
         store.mark_shot(conn, segment_id=by_position[position], mark=mark)
 
     typer.echo(f"{wanted}: {verdict}" + (f", {len(marks)} segment marks" if marks else ""))
+
+
+@app.command()
+@handle_errors
+def assemble(
+    clips: str = typer.Argument(..., help='Library clip ids, e.g. "2,3,4" or "2-5,9".'),
+    preset: Path = typer.Option(..., "--preset", help="Path to a preset YAML."),
+    caption: str | None = typer.Option(None, "--caption", help="Override the preset's text."),
+    root: Path = typer.Option(Path("."), "--root", help="Workspace root."),
+) -> None:
+    """Build a video from library clips you name, in the order you name them.
+
+    The preset's caption and output settings apply; its rhythm does not -- you
+    chose these clips, so a duration rule that dropped some of them would be
+    answering a question you did not ask.
+    """
+    _require(preset)
+
+    spec = load_preset(preset)
+    if caption:
+        spec = spec.with_caption(caption)
+
+    ids = parse_ids(clips)
+    workspace = Workspace(root=root)
+    preset_sha256, preset_json = _preset_fingerprint(preset, spec)
+
+    typer.echo(f"caption: {spec.caption.text}")
+    typer.echo(f"assembling {len(ids)} clips...")
+
+    written = assemble_clips(
+        connect(workspace.database),
+        ids=ids,
+        spec=spec,
+        workspace=workspace,
+        preset_sha256=preset_sha256,
+        preset_json=preset_json,
+        cutlist_version=_cutlist_version(),
+    )
+    typer.echo(f"wrote {written.relative_to(root).as_posix()}")
 
 
 @app.command()
