@@ -3,11 +3,12 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
+from cutlist.media import render
 from cutlist.media.caption import render_caption
 from cutlist.media.probe import probe
 from cutlist.media.render import Segment, concat, encode_segment, render_clip
 from cutlist.presets import CaptionSpec, OutputSpec
-from cutlist.shell import run
+from cutlist.shell import ToolError, run
 from tests.conftest import FIXTURE_HEX_COLORS, FIXTURE_SHOT_SECONDS
 
 OUTPUT = OutputSpec(width=854, height=480, fps=25, crf=20)
@@ -99,9 +100,10 @@ def test_render_clip_cleans_up_scratch_on_mid_list_encode_failure(
 def test_render_clip_preserves_dest_when_encode_fails(
     fixture_video, caption, tmp_path, monkeypatch
 ):
-    # dest is only ever created/truncated by concat(); encode_segment writes
-    # solely into scratch. A failure before concat runs must leave a
-    # pre-existing dest (e.g. a valid clip from a previous render) alone.
+    # dest is only ever written by concat(), and only by an os.replace of a
+    # complete file; encode_segment writes solely into scratch. A failure
+    # before concat runs must leave a pre-existing dest (e.g. a valid clip
+    # from a previous render) alone.
     dest = tmp_path / "clip.mp4"
     dest.write_bytes(b"a perfectly good previous clip")
     scratch = tmp_path / "scratch"
@@ -119,7 +121,14 @@ def test_render_clip_preserves_dest_when_encode_fails(
     assert dest.read_bytes() == b"a perfectly good previous clip"
 
 
-def test_render_clip_removes_dest_when_concat_fails(fixture_video, caption, tmp_path, monkeypatch):
+def test_render_clip_preserves_dest_when_concat_fails(
+    fixture_video, caption, tmp_path, monkeypatch
+):
+    """`rerender` writes back over a clip that already carries a verdict.
+
+    A failed rebuild that deletes it destroys the judgement too, and leaves
+    the user with `rate`'s advice to rerender -- the operation that did it.
+    """
     dest = tmp_path / "clip.mp4"
     dest.write_bytes(b"a perfectly good previous clip")
     scratch = tmp_path / "scratch"
@@ -134,7 +143,58 @@ def test_render_clip_removes_dest_when_concat_fails(fixture_video, caption, tmp_
             fixture_video, [Segment(2.0, 2.0)], caption, OUTPUT, dest, scratch
         )
 
-    assert not dest.exists()
+    assert dest.read_bytes() == b"a perfectly good previous clip"
+
+
+def _streamless_part(video: Path, tmp_path: Path) -> Path:
+    """An .mp4 with no video stream, produced the way the real bug produced one.
+
+    Seeking past the end of a source exits 0 and writes a container holding
+    nothing. It is only when concat tries to open its output from that input
+    that ffmpeg fails -- which is exactly the shape a `rerender` against a
+    truncated or re-encoded source takes.
+    """
+    part = tmp_path / "empty_part.mp4"
+    run([
+        "ffmpeg", "-y", "-v", "error",
+        "-ss", "999.0", "-i", str(video), "-t", "2.0", "-an",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", str(part),
+    ])
+    return part
+
+
+def test_concat_leaves_a_pre_existing_dest_byte_identical_when_it_fails(
+    fixture_video, tmp_path
+):
+    """The failure has to happen inside concat, not before it.
+
+    encode_segment writes only into scratch, so injecting there proves
+    nothing about dest. This drives the real ffmpeg into the real failure.
+    """
+    dest = tmp_path / "clip.mp4"
+    original = b"a rated clip nobody asked to lose"
+    dest.write_bytes(original)
+
+    with pytest.raises(ToolError):
+        concat([_streamless_part(fixture_video, tmp_path)], dest)
+
+    assert dest.read_bytes() == original
+
+
+def test_concat_leaves_no_staging_file_behind(fixture_video, caption, tmp_path):
+    """On both paths: the temporary is a sibling of dest, so litter is visible."""
+    out = tmp_path / "out"
+    out.mkdir()
+    part = encode_segment(
+        fixture_video, Segment(2.0, 2.0), caption, OUTPUT, tmp_path / "s0.mp4"
+    )
+
+    concat([part], out / "clip.mp4")
+    assert sorted(p.name for p in out.iterdir()) == ["clip.mp4"]
+
+    with pytest.raises(ToolError):
+        concat([_streamless_part(fixture_video, tmp_path)], out / "clip.mp4")
+    assert sorted(p.name for p in out.iterdir()) == ["clip.mp4"]
 
 
 def test_concat_handles_apostrophe_in_path(fixture_video, caption, tmp_path):
@@ -201,3 +261,35 @@ def test_render_clip_content_matches_source_segments(fixture_video, caption, tmp
             f"segment {i} (source start {segment.start}s) sampled {pixel} "
             f"at output {midpoint:.2f}s, expected ~{expected} ({expected_hex})"
         )
+
+
+def test_concat_never_points_ffmpeg_at_dest_itself(
+    fixture_video, caption, tmp_path, monkeypatch
+):
+    """Pin the mechanism, not only the outcome.
+
+    Aiming ffmpeg straight at dest is what let a failed rerender destroy a
+    rated clip, and it is the shape a later simplification would drift back
+    to. The staging file has to be a sibling of dest: os.replace is atomic
+    only within one filesystem, and the caller's scratch lives under cache/,
+    which need not share one with output/.
+    """
+    dest = tmp_path / "out" / "clip.mp4"
+    part = encode_segment(
+        fixture_video, Segment(2.0, 2.0), caption, OUTPUT, tmp_path / "s0.mp4"
+    )
+
+    outputs = []
+    real_run = render.run
+
+    def spying(cmd, **kwargs):
+        outputs.append(Path(cmd[-1]))
+        return real_run(cmd, **kwargs)
+
+    monkeypatch.setattr("cutlist.media.render.run", spying)
+    concat([part], dest)
+
+    assert len(outputs) == 1
+    assert outputs[0] != dest
+    assert outputs[0].parent == dest.parent
+    assert dest.exists()
