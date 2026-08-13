@@ -1,4 +1,5 @@
 import json
+import re
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -10,6 +11,18 @@ from cutlist.media.probe import probe
 from cutlist.shell import ToolError
 
 runner = CliRunner()
+
+# Rich styles an option's leading hyphen separately from the rest of its name,
+# so `--preset` is emitted as `[1;36m-[0m[1;36m-preset[0m` and
+# never appears contiguously once colour is on. Colour is off under a bare
+# pytest run and on under CI, which is exactly how an assertion on help text
+# passed locally and failed on the first push.
+_ANSI = re.compile(r"\[[0-9;]*m")
+
+
+def plain(text: str) -> str:
+    """Terminal output with styling removed, so substrings survive."""
+    return _ANSI.sub("", text)
 
 
 def test_probe_command_reports_dimensions(fixture_video):
@@ -215,16 +228,33 @@ def test_draft_reports_partial_progress_on_mid_loop_failure(fixture_video, tmp_p
 def test_help_still_works_after_error_boundary():
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
-    assert "probe" in result.stdout
-    assert "shots" in result.stdout
-    assert "draft" in result.stdout
+    assert "probe" in plain(result.stdout)
+    assert "shots" in plain(result.stdout)
+    assert "draft" in plain(result.stdout)
 
 
 def test_draft_help_lists_all_options():
     result = runner.invoke(app, ["draft", "--help"])
     assert result.exit_code == 0
     for opt in ("--preset", "--count", "--caption", "--root", "--seed"):
-        assert opt in result.stdout
+        assert opt in plain(result.stdout)
+
+
+def test_help_options_are_findable_when_colour_is_on(monkeypatch):
+    """The same assertion, with styling forced on.
+
+    Whether rich emits colour depends on the environment, so the plain-run
+    version of this test proves nothing about CI and the CI version proves
+    nothing locally. Forcing it here means one of the two always exercises the
+    styled path, and neither can drift.
+    """
+    monkeypatch.setenv("FORCE_COLOR", "1")
+    result = runner.invoke(app, ["draft", "--help"])
+
+    assert result.exit_code == 0
+    assert "[" in result.stdout, "expected styled output; FORCE_COLOR had no effect"
+    for opt in ("--preset", "--count", "--caption", "--root", "--seed"):
+        assert opt in plain(result.stdout)
 
 
 def _scratch_dirs(root: Path) -> list[Path]:
@@ -294,4 +324,4 @@ def test_the_module_can_be_run_directly():
     )
 
     assert result.returncode == 0, result.stderr
-    assert "Assemble short captioned clips" in result.stdout
+    assert "Assemble short captioned clips" in plain(result.stdout)
