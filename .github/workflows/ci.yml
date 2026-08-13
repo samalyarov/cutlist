@@ -44,7 +44,20 @@ jobs:
       - name: Build
         run: docker build -t cutlist:ci .
 
-      # The image is only useful if the entrypoint runs, and `demo` is the one
-      # command that needs no input file.
+      # --help only proves the entrypoint resolves. demo is the one command
+      # that needs no input file, so it is what actually exercises ffmpeg,
+      # scenedetect, opencv, the font and the packaged demo.yaml inside the
+      # image -- the difference between a container that starts and one that
+      # works. Runs entirely inside the container (no bind mount) so the
+      # check is not tripped up by the image's non-root user not owning a
+      # host-side directory.
       - name: Smoke test
-        run: docker run --rm cutlist:ci --help
+        run: |
+          docker run --rm --entrypoint sh cutlist:ci -c '
+            cutlist demo --count 2 &&
+            count=$(find output -name "*.mp4" | wc -l) &&
+            if [ "$count" -ne 2 ]; then
+              echo "expected 2 clips, found $count" >&2
+              exit 1
+            fi
+          '
