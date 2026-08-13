@@ -135,7 +135,35 @@ CREATE TABLE IF NOT EXISTS segment_thumbnail (
 );
 """
 
-MIGRATIONS = [_V1, _V2]
+# The library: whole detected shots, kept at source resolution so they can be
+# reused outside cutlist. A shot is the unit rather than a draft's trimmed pick,
+# because a shot is the same shot whichever run found it -- trimmed picks would
+# fill the table with near-duplicates and no id would mean anything durable.
+#
+# run.kind arrives here rather than as a CHECK constraint because SQLite's
+# ALTER TABLE ADD COLUMN does not accept one; store.py validates it alongside
+# the verdict and mark rules. It exists because run.seed is meaningless for a
+# hand-picked assembly, and recording seed 0 without saying so would be a quiet
+# lie about reproducibility.
+_V3 = """
+CREATE TABLE IF NOT EXISTS library_clip (
+    id         INTEGER PRIMARY KEY,
+    video_hash TEXT    NOT NULL REFERENCES video(video_hash),
+    start_s    REAL    NOT NULL,
+    end_s      REAL    NOT NULL,
+    shot_index INTEGER,
+    path       TEXT    NOT NULL,
+    duration_s REAL    NOT NULL,
+    created_at TEXT    NOT NULL,
+    UNIQUE (video_hash, start_s, end_s)
+);
+
+CREATE INDEX IF NOT EXISTS idx_library_video ON library_clip (video_hash);
+
+ALTER TABLE run ADD COLUMN kind TEXT NOT NULL DEFAULT 'draft';
+"""
+
+MIGRATIONS = [_V1, _V2, _V3]
 
 # Derived, never hand-written: a constant that has to be bumped alongside the
 # list is a constant that will eventually disagree with it.
