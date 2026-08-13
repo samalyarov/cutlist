@@ -57,10 +57,6 @@ class Workspace:
         return self.root / "cache"
 
     @property
-    def work(self) -> Path:
-        return self.root / "work"
-
-    @property
     def output(self) -> Path:
         return self.root / "output"
 

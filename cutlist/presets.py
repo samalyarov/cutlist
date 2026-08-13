@@ -49,8 +49,7 @@ class Preset:
         return replace(self, caption=replace(self.caption, text=text))
 
 
-def load_preset(path: Path | str) -> Preset:
-    path = Path(path)
+def load_preset(path: Path) -> Preset:
     raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
 
     name = raw.get("name") or path.stem

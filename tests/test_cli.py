@@ -225,3 +225,73 @@ def test_draft_help_lists_all_options():
     assert result.exit_code == 0
     for opt in ("--preset", "--count", "--caption", "--root", "--seed"):
         assert opt in result.stdout
+
+
+def _scratch_dirs(root: Path) -> list[Path]:
+    return sorted((root / "cache").rglob("scratch_*"))
+
+
+def test_draft_leaves_no_scratch_directory_behind(fixture_video, tmp_path):
+    """Every draft used to leak cache/<stem>__<hash>/scratch_<8hex>/caption.png.
+
+    render_clip clears its own per-ordinal subdirectory, so nothing removed
+    the run-scoped root the caption PNG sits in.
+    """
+    result = runner.invoke(app, [
+        "draft", str(fixture_video),
+        "--preset", "presets/sample_preset.yaml",
+        "--count", "2", "--root", str(tmp_path), "--seed", "0",
+    ])
+
+    assert result.exit_code == 0, result.stdout
+    assert _scratch_dirs(tmp_path) == []
+
+
+def test_draft_leaves_no_scratch_directory_behind_when_it_fails(
+    fixture_video, tmp_path, monkeypatch
+):
+    """The failure path is the one that leaks repeatedly: a user retrying a
+    broken draft accumulates a scratch directory per attempt.
+    """
+    def failing(*args, **kwargs):
+        raise ToolError("ffmpeg blew up")
+
+    monkeypatch.setattr(cli, "render_clip", failing)
+
+    result = runner.invoke(app, [
+        "draft", str(fixture_video),
+        "--preset", "presets/sample_preset.yaml",
+        "--count", "1", "--root", str(tmp_path), "--seed", "0",
+    ])
+
+    assert result.exit_code != 0
+    assert _scratch_dirs(tmp_path) == []
+
+
+def test_review_blames_the_host_when_the_host_is_what_is_wrong(tmp_path):
+    """`--host not-a-host` reported `cannot bind port 8731`, sending the user
+    to fix the one part of the command that was fine.
+    """
+    result = runner.invoke(app, [
+        "review", "--root", str(tmp_path), "--host", "not-a-host", "--no-open",
+    ])
+
+    assert result.exit_code == 1
+    assert "not-a-host" in result.output
+    assert "cannot bind port" not in result.output
+
+
+def test_the_module_can_be_run_directly():
+    """`python -m cutlist.cli` exited 0 having printed nothing, which reads
+    like a command that ran and found nothing to say.
+    """
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [sys.executable, "-m", "cutlist.cli", "--help"],
+        capture_output=True, text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "Assemble short captioned clips" in result.stdout

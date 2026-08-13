@@ -2,6 +2,8 @@ import functools
 import hashlib
 import json
 import random
+import shutil
+import socket
 import uuid
 from dataclasses import asdict
 from importlib.metadata import PackageNotFoundError, version
@@ -208,40 +210,53 @@ def _draft_clips(
     # Rooted in the cache dir and scoped by a random token: two concurrent
     # drafts of the same video and preset must not share a scratch path.
     scratch_root = workspace.cache_for(video) / f"scratch_{uuid.uuid4().hex[:8]}"
-    # Keyed per run rather than per video: concurrent drafts of the same video
-    # with different captions or presets must not overwrite each other's PNG.
-    caption_png = render_caption(spec.caption, spec.output, scratch_root / "caption.png")
 
-    written = 0
-    for ordinal in range(1, count + 1):
-        try:
-            picks = draft_picks(found, spec.rhythm, rng)
-            segments = [pick.segment for pick in picks]
-            clip = destination / f"{ordinal:02d}.mp4"
-            render_clip(
-                video, segments, caption_png, spec.output, clip,
-                scratch_root / f"{ordinal:02d}",
-            )
-            # Capturing thumbnails can fail the same way rendering can (ffmpeg
-            # on a bad seek, a source that vanished mid-run), and a clip on
-            # disk with no database row is exactly the state this release
-            # exists to prevent. Kept inside the same boundary as the render
-            # so a capture failure is reported and aborted identically, not
-            # swallowed or left to record a clip missing its thumbnails.
-            _record_picks(
-                conn, run_id=run_id, ordinal=ordinal, clip=clip,
-                root=workspace.root, picks=picks, video_hash=video_hash, video=video,
-            )
-        except (NotEnoughFootage, ToolError) as exc:
-            typer.echo(
-                f"wrote {written} of {count} clips; failed on {ordinal:02d}: {exc}",
-                err=True,
-            )
-            raise typer.Exit(code=1) from None
+    try:
+        # Keyed per run rather than per video: concurrent drafts of the same
+        # video with different captions or presets must not overwrite each
+        # other's PNG.
+        caption_png = render_caption(
+            spec.caption, spec.output, scratch_root / "caption.png"
+        )
 
-        length = sum(segment.duration for segment in segments)
-        typer.echo(f"{clip.name}  {len(segments)} segments  {length:.1f}s")
-        written += 1
+        written = 0
+        for ordinal in range(1, count + 1):
+            try:
+                picks = draft_picks(found, spec.rhythm, rng)
+                segments = [pick.segment for pick in picks]
+                clip = destination / f"{ordinal:02d}.mp4"
+                render_clip(
+                    video, segments, caption_png, spec.output, clip,
+                    scratch_root / f"{ordinal:02d}",
+                )
+                # Capturing thumbnails can fail the same way rendering can
+                # (ffmpeg on a bad seek, a source that vanished mid-run), and a
+                # clip on disk with no database row is exactly the state this
+                # release exists to prevent. Kept inside the same boundary as
+                # the render so a capture failure is reported and aborted
+                # identically, not swallowed or left to record a clip missing
+                # its thumbnails.
+                _record_picks(
+                    conn, run_id=run_id, ordinal=ordinal, clip=clip,
+                    root=workspace.root, picks=picks, video_hash=video_hash,
+                    video=video,
+                )
+            except (NotEnoughFootage, ToolError) as exc:
+                typer.echo(
+                    f"wrote {written} of {count} clips; failed on {ordinal:02d}: {exc}",
+                    err=True,
+                )
+                raise typer.Exit(code=1) from None
+
+            length = sum(segment.duration for segment in segments)
+            typer.echo(f"{clip.name}  {len(segments)} segments  {length:.1f}s")
+            written += 1
+    finally:
+        # render_clip clears only its own per-ordinal subdirectory; the caption
+        # PNG lives at the root of this one and has to outlast every clip, so
+        # nothing below can remove it. Cleared here, on the failure path too,
+        # or every draft leaves a scratch directory in cache/ for good.
+        shutil.rmtree(scratch_root, ignore_errors=True)
 
     typer.echo(f"\nwrote {written} clips to {destination}  (seed {seed})")
     return destination
@@ -410,6 +425,12 @@ def review(
             root=root, port=port, host=host, video=video, preset=preset,
             unrated_only=not all_clips,
         )
+    # Checked before the general OSError below, which it subclasses: a host
+    # that does not resolve fails here with nothing wrong with the port, and
+    # blaming the port sends the user to fix the one thing they got right.
+    except socket.gaierror as exc:
+        typer.echo(f"error: cannot resolve host {host!r}: {exc}", err=True)
+        raise typer.Exit(code=1) from None
     except OSError as exc:
         # Refuse rather than silently picking another port: a review URL you
         # did not ask for is worse than a clear failure.
@@ -447,3 +468,10 @@ def rerender(
 
     written = rebuild_clip(conn, root=root, clip_id=row["id"])
     typer.echo(f"rebuilt {wanted} ({written.stat().st_size / 1024:.0f} KB)")
+
+
+# `python -m cutlist.cli` runs this file as __main__, where the console-script
+# entry point never fires. Without this it exits 0 having done nothing, which
+# reads like success.
+if __name__ == "__main__":
+    app()

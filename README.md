@@ -16,7 +16,7 @@ cutlist review
 
 `demo` synthesises a source video, cuts three clips from it, and leaves them
 ready to rate. No input file, no download. cutlist ships no video and never
-will — you supply your own source, and nothing is redistributed.
+will -- you supply your own source, and nothing is redistributed.
 
 ## Install
 
@@ -70,7 +70,7 @@ cutlist draft "input/my-video.mp4" \
 ```
 
 `--seed` fixes the RNG for a reproducible draft. `--root` sets where
-`input/`, `cache/`, `work/` and `output/` live (defaults to the current
+`input/`, `cache/` and `output/` live (defaults to the current
 directory).
 
 `review`, `rate`, `ratings` and `rerender` are covered below, under
@@ -156,10 +156,16 @@ video is deleted, and a frame from a deleted file cannot be recovered.
 
 A clip whose file you have deleted shows as *missing* in the review queue and
 refuses a verdict: rating a clip you cannot watch would put a corrupt row in
-the one table that cannot be regenerated. Its segment marks still work, since
-those describe footage in the source. `cutlist rerender <clip-path>` rebuilds
-it from the recorded segments and preset, writing back to the same path so the
-ratings it already carries still describe it.
+the one table that cannot be regenerated. In the review page its segment marks
+still work, since those describe footage in the source rather than the clip
+file. `cutlist rate` is all-or-nothing by contrast: its verdict argument is
+required, so a `rate` against a missing clip is refused whole and its
+`--segments` marks are not recorded either -- a refused verdict must not leave
+the marks it came with half-applied. `cutlist rerender <clip-path>` rebuilds
+the file from the recorded segments and preset, writing back to the same path
+so the ratings it already carries still describe it. It refuses to rebuild from
+a source that only matches by name: same name, different bytes is not the
+footage that was rated.
 
 Nothing consumes the ratings yet. This release collects them; scoring uses them
 later.

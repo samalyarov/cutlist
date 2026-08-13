@@ -61,7 +61,3 @@ target-version = "py312"
 # would flatten that back out.
 [tool.ruff.lint]
 select = ["E", "F", "I"]
-
-[tool.ruff.lint.per-file-ignores]
-# Fixtures and helpers are imported for their side effects on the namespace.
-"tests/conftest.py" = ["F401"]
