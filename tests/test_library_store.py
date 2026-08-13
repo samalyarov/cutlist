@@ -25,17 +25,39 @@ def test_recording_the_same_shot_twice_returns_the_same_id(conn):
 
 
 def test_timecodes_differing_below_a_millisecond_are_the_same_shot(conn):
-    """Float equality is not identity. 1.0000001 and 1.0 are one shot."""
+    """Float equality is not identity. 1.0000001 and 1.0 are one shot.
+
+    The noisy value is written first and the clean one second, not the other
+    way round: a write path that forgets to round would still store the
+    noisy value verbatim, and a *clean*-first ordering would insert that
+    exact clean value, so a second write of the same clean value would find
+    it regardless of whether rounding happened at all -- the bug would be
+    invisible. Writing the noisy value first means the row on disk only
+    matches a later clean-valued write if both the write and the lookup
+    actually round.
+    """
     first = store.record_library_clip(
-        conn, video_hash="abc", start_s=1.0, end_s=3.0,
+        conn, video_hash="abc", start_s=1.0000001, end_s=3.0000001,
         shot_index=0, path="library/abc/0.mp4", duration_s=2.0,
     )
     second = store.record_library_clip(
-        conn, video_hash="abc", start_s=1.0000001, end_s=3.0000001,
+        conn, video_hash="abc", start_s=1.0, end_s=3.0,
         shot_index=0, path="library/abc/0.mp4", duration_s=2.0,
     )
     assert first == second
     assert conn.execute("SELECT COUNT(*) FROM library_clip").fetchone()[0] == 1
+
+    # library_clip_at is called directly by later tasks, not only through
+    # record_library_clip's own dedup check -- it must round an unrounded
+    # caller's arguments too, or it silently misses a shot recorded under
+    # its rounded name.
+    store.record_library_clip(
+        conn, video_hash="abc", start_s=2.0, end_s=4.0,
+        shot_index=1, path="library/abc/1.mp4", duration_s=2.0,
+    )
+    found = store.library_clip_at(conn, video_hash="abc", start_s=2.0000001, end_s=4.0000001)
+    assert found is not None
+    assert (found["start_s"], found["end_s"]) == (2.0, 4.0)
 
 
 def test_library_clips_filters_by_video(conn):
