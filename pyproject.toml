@@ -3,7 +3,7 @@ name = "cutlist"
 version = "0.1.0"
 description = "Assemble short captioned clips from a long video"
 readme = "README.md"
-license = "MIT"
+license = "AGPL-3.0-only"
 license-files = ["LICENSE"]
 authors = [{ name = "Sam Maliarov" }]
 keywords = ["video", "ffmpeg", "scene-detection", "editing"]

@@ -193,6 +193,13 @@ corrupted ratings database -- the one artifact with no backup. If you need
 Docker on Windows anyway, keep the database in a named volume rather than a
 bind mount.
 
+## Licence
+
+AGPL-3.0-only. Use it, modify it, run it. If you modify it and let other people
+use it over a network, you have to publish your source too.
+
+If that does not suit your situation, ask me about a commercial licence.
+
 ## Current state
 
 Segment selection is currently random, subject only to the rhythm
