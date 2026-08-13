@@ -45,6 +45,9 @@ include = ["cutlist*"]
 # non-editable install serves GET / into a FileNotFoundError.
 [tool.setuptools.package-data]
 "cutlist.review" = ["page.html"]
+# Bundled so `cutlist demo` works from an installed wheel with no repository
+# checkout -- which is the container's situation exactly.
+"cutlist" = ["demo.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

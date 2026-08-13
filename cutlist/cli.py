@@ -11,6 +11,7 @@ import typer
 
 from cutlist.db import store
 from cutlist.db.schema import connect
+from cutlist.demo import build_demo_source
 from cutlist.feedback.rate import parse_segment_marks
 from cutlist.media.caption import FontError, render_caption
 from cutlist.media.probe import probe as probe_video
@@ -276,6 +277,37 @@ def draft(
         video=video, spec=spec, workspace=workspace,
         count=count, seed=seed, preset_path=preset,
     )
+
+
+@app.command()
+@handle_errors
+def demo(
+    count: int = typer.Option(3, "--count", help="How many clips to produce."),
+    root: Path = typer.Option(Path("."), "--root", help="Workspace root."),
+    seed: int | None = typer.Option(None, "--seed", help="Fix the RNG."),
+) -> None:
+    """Draft clips from a synthesised source, with no input file needed."""
+    workspace = Workspace(root=root)
+    source = workspace.input / "demo-source.mp4"
+
+    if source.exists():
+        typer.echo(f"using {source}")
+    else:
+        typer.echo("building a demo source video...")
+        build_demo_source(source)
+
+    preset_path = Path(__file__).with_name("demo.yaml")
+    spec = load_preset(preset_path)
+    if seed is None:
+        seed = random.randrange(2**31)
+
+    destination = _draft_clips(
+        connect(workspace.database),
+        video=source, spec=spec, workspace=workspace,
+        count=count, seed=seed, preset_path=preset_path,
+    )
+    typer.echo(f"\nnow run:  cutlist review --root {root}")
+    typer.echo(f"clips are in {destination}")
 
 
 @app.command()
