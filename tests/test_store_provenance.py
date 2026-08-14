@@ -181,3 +181,33 @@ def test_failed_segment_insert_does_not_leave_orphaned_clip(conn):
     # And it's the one we just recorded
     recorded_clip = conn.execute("SELECT id FROM clip").fetchone()
     assert recorded_clip["id"] == clip_id
+
+
+def test_clip_detail_reports_which_kind_of_run_made_the_clip(conn):
+    """A seed of 0 is legal for a draft and is what an assembly records for
+    want of anything better, so seed alone cannot tell a reader which it is
+    looking at. The discriminator has to reach the reader."""
+    video_hash = _video(conn)
+    kinds = {}
+    for kind, seed in (("draft", 0), ("assemble", 0)):
+        run_id = store.start_run(
+            conn,
+            preset_name="sample_preset",
+            preset_sha256="deadbeef",
+            preset_json='{"name": "sample_preset"}',
+            caption_text="TOMORROW",
+            seed=seed,
+            cutlist_version="0.1.0",
+            video_hashes=[video_hash],
+            kind=kind,
+        )
+        clip_id = store.record_clip(
+            conn, run_id=run_id, ordinal=1, path=f"output/{kind}.mp4",
+            duration_s=2.0, segments=[_segment(video_hash, 0)],
+        )
+        kinds[kind] = store.clip_detail(conn, clip_id)
+
+    assert kinds["draft"]["kind"] == "draft"
+    assert kinds["assemble"]["kind"] == "assemble"
+    # The two are otherwise indistinguishable to a reader.
+    assert kinds["draft"]["seed"] == kinds["assemble"]["seed"] == 0

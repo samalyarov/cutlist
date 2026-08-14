@@ -345,11 +345,18 @@ def clips_for_review(
 
 
 def clip_detail(conn: sqlite3.Connection, clip_id: int) -> dict | None:
-    """One clip with its segments and their current marks."""
+    """One clip with its segments and their current marks.
+
+    `kind` travels with `seed` because a seed alone cannot say what it means:
+    `draft --seed 0` is accepted and an assembly records 0 for want of
+    anything better, so a reader with only the number shows "seed 0" for a
+    hand-picked clip that no seed reproduces.
+    """
     row = conn.execute(
         f"""
         SELECT clip.id, clip.ordinal, clip.path, clip.duration_s,
-               run.preset_name, run.caption_text, run.seed, run.preset_json,
+               run.preset_name, run.caption_text, run.seed, run.kind,
+               run.preset_json,
                ({_LATEST_VERDICT}) AS verdict
         FROM clip JOIN run ON run.id = clip.run_id
         WHERE clip.id = ?
