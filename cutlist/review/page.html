@@ -188,8 +188,14 @@ async function show(i) {
   detail = await (await fetch(`/api/clip/${clip.id}`)).json();
   countEl.textContent = `clip ${index + 1} / ${clips.length}`;
   const rated = detail.verdict ? ` · rated ${detail.verdict}` : "";
+  // A seed describes how a draft was sampled. An assembly is a list of
+  // choices a person made, records 0 for want of anything better, and no
+  // seed reproduces it -- so printing "seed 0" here would be a lie about
+  // reproducibility in the one place a human reads it.
+  const origin =
+    detail.kind === "assemble" ? "hand-picked" : `seed ${detail.seed}`;
   metaEl.textContent =
-    `${detail.preset_name} · "${detail.caption_text}" · seed ${detail.seed}${rated}`;
+    `${detail.preset_name} · "${detail.caption_text}" · ${origin}${rated}`;
   stage.classList.toggle("gone", clip.available === false);
   if (clip.available === false) {
     player.removeAttribute("src"); player.load();

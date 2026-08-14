@@ -184,7 +184,8 @@ did not ask.
 
 An assembled clip records the *original* video and timecodes, not the library
 file, so it decomposes exactly like a drafted one and a rating on it means the
-same thing.
+same thing -- including `cutlist rerender`, which rebuilds it from those
+records even when the ids you named came from several different videos.
 
 `draft --keep-shots` also files the shots it cut, for when you are drafting
 something you know you will want to reuse. It is off by default.
@@ -206,9 +207,12 @@ segments, `z` to undo, `?` for the full list. It opens a browser unless you
 pass `--no-open`, and refuses a port that is already taken. `cutlist rate`
 does the same from the terminal.
 
-Thumbnails are captured into the database as each clip is drafted, not
+Thumbnails are captured into the database as each clip is recorded, not
 generated on demand -- a segment mark has to stay legible after the source
 video is deleted, and a frame from a deleted file cannot be recovered.
+`draft` captures them from the source; `assemble` captures them from the
+library master it encoded, which is the same footage and survives the source
+being cleared out.
 
 A clip whose file you have deleted shows as *missing* in the review queue and
 refuses a verdict: rating a clip you cannot watch would put a corrupt row in
@@ -219,9 +223,10 @@ required, so a `rate` against a missing clip is refused whole and its
 `--segments` marks are not recorded either -- a refused verdict must not leave
 the marks it came with half-applied. `cutlist rerender <clip-path>` rebuilds
 the file from the recorded segments and preset, writing back to the same path
-so the ratings it already carries still describe it. It refuses to rebuild from
-a source that only matches by name: same name, different bytes is not the
-footage that was rated.
+so the ratings it already carries still describe it. Each segment is cut from
+its own source, so a clip assembled across several videos rebuilds like any
+other. It refuses to rebuild from a source that only matches by name: same
+name, different bytes is not the footage that was rated.
 
 Nothing consumes the ratings yet. This release collects them; scoring uses them
 later.

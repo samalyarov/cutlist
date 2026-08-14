@@ -8,6 +8,7 @@ from cutlist.cli import app
 from cutlist.db import store
 from cutlist.db.schema import connect
 from cutlist.shell import ToolError
+from tests.conftest import FIXTURE_HEX_COLORS
 
 runner = CliRunner()
 
@@ -282,11 +283,17 @@ def test_draft_files_nothing_in_the_library_by_default(tmp_path, fixture_video):
 
 def test_keep_shots_files_the_whole_shots_not_the_trimmed_picks(tmp_path, fixture_video):
     """A shot is the same shot whichever run found it, so the library stores
-    whole shots -- trimmed picks would be near-duplicates with unstable ids."""
+    whole shots -- trimmed picks would be near-duplicates with unstable ids.
+
+    Seed 1 draws four of the fixture's six shots. That matters: with a seed
+    drawing all six, filing *every* shot rather than only the picks' would
+    satisfy the subset check below and this test would prove nothing about
+    which shots were chosen.
+    """
     result = runner.invoke(
         app,
         ["draft", str(fixture_video), "--preset", "presets/sample_preset.yaml",
-         "--count", "1", "--seed", "5", "--keep-shots", "--root", str(tmp_path)],
+         "--count", "1", "--seed", "1", "--keep-shots", "--root", str(tmp_path)],
     )
     assert result.exit_code == 0, result.output
 
@@ -306,8 +313,60 @@ def test_keep_shots_files_the_whole_shots_not_the_trimmed_picks(tmp_path, fixtur
     segment_spans = {(row["seg_start_s"], row["seg_end_s"]) for row in segments}
     stored = {(row["start_s"], row["end_s"]) for row in library}
 
-    assert stored <= shot_spans
+    # The draw has to be a strict subset, or "only the picks' shots" and
+    # "every shot in the video" are the same set and nothing below can tell
+    # them apart.
+    assert len(shot_spans) < len(FIXTURE_HEX_COLORS), (
+        f"seed drew {len(shot_spans)} of {len(FIXTURE_HEX_COLORS)} shots; this "
+        f"test needs a strict subset to discriminate"
+    )
+    assert stored == shot_spans
     assert not (stored & segment_spans)
+
+
+def test_a_keep_shots_failure_neither_aborts_the_draft_nor_blames_a_clip_that_landed(
+    fixture_video, preset_file, tmp_path, monkeypatch
+):
+    """--keep-shots is a convenience, and an optional side-effect must not
+    abort the primary work or lie about it.
+
+    Sitting inside the render's try, an extraction failure reported
+    "wrote 0 of 3 clips; failed on 01" while clip 01 had in fact landed --
+    row, file, segments and thumbnails all present -- and swallowed the
+    closing line that says where the clips were written. The ordinal in that
+    message means "this one did not land"; here they all did.
+    """
+    def blow_up(*args, **kwargs):
+        raise ToolError("ffmpeg blew up")
+
+    monkeypatch.setattr("cutlist.library.extract_shot", blow_up)
+
+    result = _draft(
+        fixture_video, preset_file, tmp_path, extra=["--count", "3", "--keep-shots"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "wrote 3 clips to" in result.output
+    assert "failed on" not in result.output
+    # Reported rather than silent, and per ordinal: the user asked for the
+    # library copies and did not get them.
+    assert result.output.count("warning: ") == 3
+    assert result.output.count("library copy skipped") == 3
+
+    conn = connect(tmp_path / "cutlist.sqlite")
+    clips = conn.execute("SELECT * FROM clip ORDER BY ordinal").fetchall()
+    assert [clip["ordinal"] for clip in clips] == [1, 2, 3]
+    for clip in clips:
+        assert (tmp_path / clip["path"]).exists()
+        segments = conn.execute(
+            "SELECT id FROM segment WHERE clip_id = ?", (clip["id"],)
+        ).fetchall()
+        assert segments
+        for segment in segments:
+            assert store.segment_thumbnail(conn, segment["id"]) is not None
+
+    # Nothing reached the library, which is exactly what was reported.
+    assert conn.execute("SELECT COUNT(*) FROM library_clip").fetchone()[0] == 0
 
 
 def test_keep_shots_reuses_what_extract_already_stored(tmp_path, fixture_video):

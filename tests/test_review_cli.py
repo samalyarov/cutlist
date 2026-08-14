@@ -97,3 +97,13 @@ def test_build_server_accepts_an_explicit_host(tmp_path):
         assert httpd.server_address[0] == "0.0.0.0"
     finally:
         httpd.server_close()
+
+
+def test_page_only_calls_a_number_a_seed_when_a_draft_produced_it():
+    """An assembly records seed 0 because no seed reproduces a list of
+    choices. Printing "seed 0" for one would be a quiet lie about
+    reproducibility in the one place a human reads it."""
+    assert 'detail.kind === "assemble"' in PAGE
+    assert "hand-picked" in PAGE
+    # ...and no unconditional seed rendering left behind.
+    assert "· seed ${detail.seed}" not in PAGE
