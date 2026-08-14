@@ -5,7 +5,7 @@ import pytest
 from PIL import Image
 from typer.testing import CliRunner
 
-from cutlist.assemble import AssembleError, parse_ids
+from cutlist.assemble import MAX_RANGE, AssembleError, parse_ids
 from cutlist.cli import app
 from cutlist.db import store
 from cutlist.db.schema import connect
@@ -44,6 +44,28 @@ def test_parse_ids_rejects_junk():
 def test_parse_ids_rejects_an_empty_list():
     with pytest.raises(AssembleError, match="no clip ids"):
         parse_ids("")
+
+
+@pytest.mark.parametrize("text", ["²", "3,²", "1-²", "²-3"])
+def test_parse_ids_rejects_digits_int_would_not_accept(text):
+    """str.isdigit() is True for the superscript two, and int() then raises
+    ValueError -- which is not a handled error, so it reached the user as a
+    traceback. isdecimal admits exactly what int accepts."""
+    assert "²".isdigit(), "the premise of this test"
+    with pytest.raises(AssembleError, match="not a (range of )?clip id"):
+        parse_ids(text)
+
+
+def test_parse_ids_refuses_a_range_too_wide_to_be_meant():
+    """Validated before the range is materialised. "0-100000000" is one
+    keystroke from "0-10" and used to allocate a hundred million ints before
+    anything checked them -- a typo turning into a hang."""
+    with pytest.raises(AssembleError, match=f"limited to {MAX_RANGE}"):
+        parse_ids("0-100000000")
+
+
+def test_parse_ids_allows_a_range_at_the_limit():
+    assert len(parse_ids(f"1-{MAX_RANGE}")) == MAX_RANGE
 
 
 @pytest.fixture

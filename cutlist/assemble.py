@@ -21,11 +21,24 @@ class AssembleError(RuntimeError):
     """A video cannot be assembled from the clips it was given."""
 
 
+# A range is a convenience for naming neighbouring shots, not a way to ask for
+# a library nobody has. Checked before the range is materialised: "0-100000000"
+# is one keystroke away from "0-10" and would otherwise allocate a hundred
+# million ints -- about 800 MB and over a second -- before anything looked at
+# them, turning a typo into a hang instead of a sentence.
+MAX_RANGE = 10_000
+
+
 def parse_ids(text: str) -> list[int]:
     """Parse `"2,3"` and `"2-5"` into library clip ids.
 
     Order is preserved and repeats are kept, because the order is the edit:
     `3,1,3` means play clip 3, then 1, then 3 again.
+
+    Digits are tested with `isdecimal` rather than `isdigit`, which is the
+    wider set: `"²".isdigit()` is True and `int("²")` raises ValueError, which
+    is not a handled error and so reaches the user as a traceback. `isdecimal`
+    admits exactly what `int` accepts.
     """
     # Checked before splitting: "" splits to [""], which would otherwise be
     # reported as an empty *entry* in a list -- true, but a confusing way to
@@ -42,17 +55,24 @@ def parse_ids(text: str) -> list[int]:
         if "-" in chunk.lstrip("-"):
             low, _, high = chunk.partition("-")
             low, high = low.strip(), high.strip()
-            if not (low.isdigit() and high.isdigit()):
+            if not (low.isdecimal() and high.isdecimal()):
                 raise AssembleError(f"not a range of clip ids: {chunk!r}")
             if int(low) > int(high):
                 raise AssembleError(
                     f"range runs backwards: {chunk!r}. Write it low-to-high, and "
                     f"list ids separately if you want them in that order."
                 )
+            width = int(high) - int(low) + 1
+            if width > MAX_RANGE:
+                raise AssembleError(
+                    f"range {chunk!r} spans {width} clip ids; a single range is "
+                    f"limited to {MAX_RANGE}. Check for a stray digit -- `cutlist "
+                    f"library` lists the ids that exist."
+                )
             ids.extend(range(int(low), int(high) + 1))
             continue
 
-        if not chunk.isdigit():
+        if not chunk.isdecimal():
             raise AssembleError(f"not a clip id: {chunk!r}")
         ids.append(int(chunk))
 
