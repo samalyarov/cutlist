@@ -268,7 +268,8 @@ def _draft_clips(
                         )
                     except ToolError as exc:
                         typer.echo(
-                            f"{ordinal:02d}: library copy skipped: {exc}", err=True
+                            f"warning: {ordinal:02d}: library copy skipped: {exc}",
+                            err=True,
                         )
             except (NotEnoughFootage, ToolError) as exc:
                 typer.echo(

@@ -350,6 +350,7 @@ def test_a_keep_shots_failure_neither_aborts_the_draft_nor_blames_a_clip_that_la
     assert "failed on" not in result.output
     # Reported rather than silent, and per ordinal: the user asked for the
     # library copies and did not get them.
+    assert result.output.count("warning: ") == 3
     assert result.output.count("library copy skipped") == 3
 
     conn = connect(tmp_path / "cutlist.sqlite")
