@@ -252,10 +252,24 @@ def _draft_clips(
                     # points. Routed through extract_all so there is exactly
                     # one way footage enters the library, and it skips whatever
                     # is already there.
-                    extract_all(
-                        conn, video=video, workspace=workspace,
-                        shots=[pick.shot for pick in picks],
-                    )
+                    #
+                    # Handled here rather than by the boundary below, because
+                    # by this point the clip has landed: file, row, segments
+                    # and thumbnails all exist. Letting an extraction failure
+                    # out would count a clip that succeeded as failed, blame
+                    # its ordinal for not landing, abort the clips after it,
+                    # and suppress the closing line that says where the ones
+                    # already written went. --keep-shots is a convenience; an
+                    # optional side-effect does not get to do that.
+                    try:
+                        extract_all(
+                            conn, video=video, workspace=workspace,
+                            shots=[pick.shot for pick in picks],
+                        )
+                    except ToolError as exc:
+                        typer.echo(
+                            f"{ordinal:02d}: library copy skipped: {exc}", err=True
+                        )
             except (NotEnoughFootage, ToolError) as exc:
                 typer.echo(
                     f"wrote {written} of {count} clips; failed on {ordinal:02d}: {exc}",
