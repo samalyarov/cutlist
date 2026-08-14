@@ -1,3 +1,4 @@
+import shutil
 from pathlib import Path
 
 import pytest
@@ -175,6 +176,64 @@ def test_assemble_records_a_segment_per_chosen_clip_in_order(extracted):
         for i in set(chosen)
     }
     assert [row["seg_start_s"] for row in rows] == [starts[i] for i in chosen]
+
+
+def test_assemble_records_a_thumbnail_for_every_segment(extracted):
+    root, conn, ids = extracted
+    chosen = [ids[0], ids[1]]
+
+    result = runner.invoke(
+        app,
+        [
+            "assemble", ",".join(str(i) for i in chosen), "--preset", PRESET,
+            "--root", str(root),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+
+    clip_id = conn.execute("SELECT id FROM clip ORDER BY id DESC LIMIT 1").fetchone()[0]
+    segments = conn.execute(
+        "SELECT id FROM segment WHERE clip_id = ? ORDER BY position", (clip_id,)
+    ).fetchall()
+    assert len(segments) == len(chosen)
+    for segment in segments:
+        image = store.segment_thumbnail(conn, segment["id"])
+        assert image, f"segment {segment['id']} has no thumbnail"
+        assert image[:2] == b"\xff\xd8", "a thumbnail should be JPEG bytes"
+
+
+def test_assembled_thumbnails_survive_deleting_the_source(tmp_path, fixture_video):
+    """A mark stays legible after its source is gone -- and "masters for
+    reuse" is an invitation to delete the source. Captured from the library
+    master, which is the same footage and is still there; a capture from the
+    source could not have happened at all here.
+    """
+    source = tmp_path / "input" / "fixture.mp4"
+    source.parent.mkdir(parents=True)
+    shutil.copy(fixture_video, source)
+    assert runner.invoke(
+        app, ["extract", str(source), "--root", str(tmp_path)]
+    ).exit_code == 0
+
+    conn = connect(tmp_path / "cutlist.sqlite")
+    ids = [row[0] for row in conn.execute("SELECT id FROM library_clip ORDER BY id")]
+
+    # Gone before a single frame is assembled.
+    source.unlink()
+
+    result = runner.invoke(
+        app,
+        ["assemble", f"{ids[0]},{ids[2]}", "--preset", PRESET, "--root", str(tmp_path)],
+    )
+    assert result.exit_code == 0, result.output
+
+    clip_id = conn.execute("SELECT id FROM clip ORDER BY id DESC LIMIT 1").fetchone()[0]
+    segments = conn.execute(
+        "SELECT id FROM segment WHERE clip_id = ? ORDER BY position", (clip_id,)
+    ).fetchall()
+    assert len(segments) == 2
+    for segment in segments:
+        assert store.segment_thumbnail(conn, segment["id"])
 
 
 def test_assemble_records_the_original_source_not_the_library_file(extracted):

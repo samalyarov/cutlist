@@ -13,6 +13,7 @@ from pathlib import Path
 from cutlist.db import store
 from cutlist.media.caption import render_caption
 from cutlist.media.render import Segment, concat, encode_segment
+from cutlist.media.thumbs import thumbnail_bytes
 from cutlist.paths import resolve_within
 
 
@@ -156,8 +157,17 @@ def assemble_clips(
                 shot_start_s=row["start_s"],
                 shot_end_s=row["end_s"],
                 shot_index=row["shot_index"],
+                # From the library master, not the original source. It is the
+                # exact footage that was just encoded, and it is still here
+                # when the source is not -- which "masters for reuse" is an
+                # open invitation to arrange. A mark with no picture is a
+                # judgement about nothing, and a frame from a deleted file
+                # cannot be recovered later by any change to this code.
+                # The master starts at zero, so its own midpoint is the
+                # middle of the shot.
+                thumbnail=thumbnail_bytes(path, float(row["duration_s"]) / 2),
             )
-            for row, _ in resolved
+            for row, path in resolved
         ],
     )
     return dest

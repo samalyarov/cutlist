@@ -15,8 +15,9 @@ class SegmentRecord:
     what was on screen and judged, the shot is the take it belongs to. Neither
     can be recovered from the other after the fact.
 
-    The thumbnail is captured at draft time, from the source video, so a mark
-    stays legible after the source is gone -- a frame from a deleted file
+    The thumbnail is captured when the clip is recorded -- by `draft` from the
+    source video, by `assemble` from the library master it encoded -- so a
+    mark stays legible after the source is gone. A frame from a deleted file
     cannot be recovered by any later change.
     """
 
