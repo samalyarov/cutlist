@@ -8,6 +8,7 @@ from cutlist.cli import app
 from cutlist.db import store
 from cutlist.db.schema import connect
 from cutlist.media.caption import render_caption
+from cutlist.media.probe import probe
 from cutlist.media.render import Segment, render_clip
 from cutlist.presets import OutputSpec, load_preset, preset_from_dict
 from cutlist.rebuild import RebuildError, rebuild_clip
@@ -61,23 +62,104 @@ def test_rerender_reports_a_missing_source(drafted):
         rebuild_clip(conn, root=root, clip_id=clip_id)
 
 
-def test_rerender_refuses_a_clip_drawn_from_more_than_one_video(tmp_path):
+@pytest.fixture
+def assembled_across_two_sources(tmp_path, fixture_video, cutfree_video):
+    """One assembled clip whose segments come from two different videos.
+
+    Before v1.2 this was unreachable from the CLI. `assemble` naming ids from
+    two sources now builds one in a single command, which is what turned
+    rerender's refusal from unreachable into a trap.
+    """
+    (tmp_path / "input").mkdir()
+    for original, name in (
+        (fixture_video, "fixture.mp4"), (cutfree_video, "cutfree.mp4")
+    ):
+        copied = tmp_path / "input" / name
+        shutil.copy(original, copied)
+        assert CliRunner().invoke(
+            app, ["extract", str(copied), "--root", str(tmp_path)]
+        ).exit_code == 0
+
     conn = connect(tmp_path / "cutlist.sqlite")
-    store.record_video(conn, video_hash="a", display_name="a.mp4")
-    store.record_video(conn, video_hash="b", display_name="b.mp4")
-    run_id = store.start_run(
-        conn, preset_name="p", preset_sha256="s", preset_json="{}",
-        caption_text="c", seed=1, cutlist_version="0.1.0", video_hashes=["a", "b"],
+    first, second = (
+        conn.execute(
+            "SELECT library_clip.id FROM library_clip JOIN video "
+            "ON video.video_hash = library_clip.video_hash "
+            "WHERE video.display_name = ? ORDER BY library_clip.id",
+            (name,),
+        ).fetchone()[0]
+        for name in ("fixture.mp4", "cutfree.mp4")
     )
-    clip_id = store.record_clip(
-        conn, run_id=run_id, ordinal=1, path="o/01.mp4", duration_s=4.0,
-        segments=[
-            store.SegmentRecord("a", 1.0, 3.0, 0.0, 4.0, 0),
-            store.SegmentRecord("b", 1.0, 3.0, 0.0, 4.0, 1),
-        ],
+
+    result = CliRunner().invoke(
+        app,
+        ["assemble", f"{first},{second},{first}",
+         "--preset", "presets/sample_preset.yaml", "--root", str(tmp_path)],
     )
-    with pytest.raises(RebuildError, match="more than one source"):
-        rebuild_clip(conn, root=tmp_path, clip_id=clip_id)
+    assert result.exit_code == 0, result.output
+
+    clip = conn.execute("SELECT id, path FROM clip ORDER BY id DESC LIMIT 1").fetchone()
+    spanned = conn.execute(
+        "SELECT COUNT(DISTINCT video_hash) FROM segment WHERE clip_id = ?",
+        (clip["id"],),
+    ).fetchone()[0]
+    assert spanned == 2, "the fixture has to actually span two sources"
+    return tmp_path, conn, clip["id"], tmp_path / clip["path"]
+
+
+def test_rerender_rebuilds_a_clip_drawn_from_more_than_one_video(
+    assembled_across_two_sources,
+):
+    """Refusing this deadlocked the pair: rate sent a missing clip to
+    rerender, rerender sent it back, and the clip was permanently unratable
+    and unrecoverable. assemble is itself a multi-source renderer -- it
+    encodes each part from a different file and concatenates -- so there was
+    never anything here rerender could not rebuild the same way.
+    """
+    root, conn, clip_id, path = assembled_across_two_sources
+    original = probe(path).duration
+    path.unlink()
+
+    rebuilt = rebuild_clip(conn, root=root, clip_id=clip_id)
+
+    assert rebuilt == path
+    assert path.exists()
+    assert probe(path).duration == pytest.approx(original, abs=0.5)
+
+
+def test_a_missing_multi_source_clip_can_be_rerendered_and_then_rated(
+    assembled_across_two_sources,
+):
+    """The deadlock, walked end to end through the CLI that created it."""
+    root, conn, clip_id, path = assembled_across_two_sources
+    relative = path.relative_to(root).as_posix()
+    path.unlink()
+
+    refused = CliRunner().invoke(app, ["rate", relative, "fire", "--root", str(root)])
+    assert refused.exit_code == 1
+    assert "rerender it first" in refused.output
+
+    rebuilt = CliRunner().invoke(app, ["rerender", relative, "--root", str(root)])
+    assert rebuilt.exit_code == 0, rebuilt.output
+
+    rated = CliRunner().invoke(app, ["rate", relative, "fire", "--root", str(root)])
+    assert rated.exit_code == 0, rated.output
+    assert store.clip_detail(conn, clip_id)["verdict"] == "fire"
+
+
+def test_rerender_names_which_of_several_sources_is_missing(
+    assembled_across_two_sources,
+):
+    """"a source is missing" is not actionable when a clip has two. Every
+    source is resolved before anything is encoded, so nothing is written."""
+    root, conn, clip_id, path = assembled_across_two_sources
+    path.unlink()
+    (root / "input" / "cutfree.mp4").unlink()
+
+    with pytest.raises(RebuildError, match="cutfree.mp4"):
+        rebuild_clip(conn, root=root, clip_id=clip_id)
+
+    assert not path.exists()
 
 
 def test_the_rerendered_clip_keeps_its_ratings(drafted):
