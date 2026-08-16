@@ -1,3 +1,4 @@
+import os
 import shutil
 from pathlib import Path
 
@@ -262,3 +263,38 @@ def test_a_refused_rerender_does_not_destroy_the_rated_clip(drafted):
         )
 
     assert path.read_bytes() == before
+
+
+def test_a_clip_another_program_holds_open_fails_as_one_error_line(drafted, monkeypatch):
+    """The review page streams clips, including the one being rerendered.
+
+    On Windows os.replace cannot overwrite a file another process has open,
+    and PermissionError is an OSError but not a FileNotFoundError, so it used
+    to reach the user as a traceback. It always failed safe -- this is about
+    what the failure looks like, and about the staging file not being left
+    behind in the user's output directory.
+
+    Raised from a stub rather than a real open handle because POSIX replaces
+    an open file happily: a real handle would prove nothing on the platform
+    CI runs on. Narrowed to this one destination so nothing else in the
+    process loses os.replace.
+    """
+    root, conn, clip_id, path = drafted
+    before = path.read_bytes()
+    relative = path.relative_to(root).as_posix()
+    real_replace = os.replace
+
+    def busy(src, dst):
+        if Path(dst) == path:
+            raise PermissionError(13, "Access is denied")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr("cutlist.media.render.os.replace", busy)
+
+    result = CliRunner().invoke(app, ["rerender", relative, "--root", str(root)])
+
+    assert result.exit_code == 1
+    assert not isinstance(result.exception, PermissionError), result.exception
+    assert "another program has it open" in result.output
+    assert path.read_bytes() == before
+    assert not list(path.parent.glob(".*.mp4"))
