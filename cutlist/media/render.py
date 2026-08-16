@@ -8,6 +8,10 @@ from cutlist.presets import OutputSpec
 from cutlist.shell import run
 
 
+class DestinationBusy(RuntimeError):
+    """A finished render cannot be moved onto the path it belongs at."""
+
+
 @dataclass(frozen=True)
 class Segment:
     """A slice of the source video, in source timecodes."""
@@ -110,7 +114,19 @@ def concat(parts: list[Path], dest: Path) -> Path:
             "-c", "copy",
             str(staged),
         ])
-        os.replace(staged, dest)
+        try:
+            os.replace(staged, dest)
+        except PermissionError as exc:
+            # Windows refuses to replace a file another process holds open --
+            # in practice the review page streaming the very clip a rerender
+            # is rebuilding. Nothing is lost when it happens: dest still holds
+            # what it held, and the staged file goes below. So the whole fix
+            # is to look like a handled failure instead of a traceback.
+            raise DestinationBusy(
+                f"cannot replace {dest}: another program has it open. "
+                f"The review page streams clips -- close that tab, or stop "
+                f"`cutlist review`, and try again"
+            ) from exc
     finally:
         listing.unlink(missing_ok=True)
         staged.unlink(missing_ok=True)

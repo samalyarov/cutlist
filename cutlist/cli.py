@@ -20,7 +20,7 @@ from cutlist.library import estimate as estimate_extraction
 from cutlist.library import extract_all
 from cutlist.media.caption import FontError, render_caption
 from cutlist.media.probe import probe as probe_video
-from cutlist.media.render import render_clip
+from cutlist.media.render import DestinationBusy, render_clip
 from cutlist.media.shots import detect_shots
 from cutlist.media.thumbs import thumbnail_bytes
 from cutlist.paths import Workspace, resolve_within, video_id
@@ -38,6 +38,7 @@ app = typer.Typer(help="Assemble short captioned clips from a long video.")
 HANDLED_ERRORS = (
     ToolError, PresetError, FontError, NotEnoughFootage, FileNotFoundError,
     store.RatingError, store.RatingNotFound, RebuildError, AssembleError,
+    DestinationBusy,
 )
 
 
