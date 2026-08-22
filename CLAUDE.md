@@ -56,8 +56,9 @@ nothing about a pipeline whose entire job is calling ffmpeg correctly.
 
 ```
 cutlist/
-  cli.py              every command; argument parsing, reporting, and (still)
-                      the draft pipeline itself
+  cli.py              every command; argument parsing, reporting, the
+                      `working()` progress spinner, and (still) the draft
+                      pipeline itself
   paths.py            Workspace (input/cache/output/library/database), video_id,
                       resolve_within
   presets.py          Preset/CaptionSpec/RhythmSpec/OutputSpec, YAML loading,
@@ -314,6 +315,14 @@ emitted as `\x1b[1;36m-\x1b[0m\x1b[1;36m-preset\x1b[0m` — never contiguous. A
 test asserting `"--preset" in result.stdout` passes locally (colour off) and
 fails in CI (colour on). Strip styling before matching; `tests/test_cli.py` has
 a `plain()` helper and a test that forces colour on.
+
+**FORCE_COLOR makes rich claim a terminal that is not there.** `Console.is_terminal`
+returns true for *any* value of `FORCE_COLOR`, and CI and the documented test
+command both set `FORCE_COLOR=1`. A progress spinner gated on it would start a
+refresh thread writing ANSI frames into pytest's captured stderr in every test
+that runs a command. `cli.working()` gates on `sys.stderr.isatty()` instead --
+plus `is_dumb_terminal`, a tty that cannot move the cursor, where rich draws
+nothing at all rather than a still frame.
 
 **`executescript()` auto-commits each statement.** A migration without an
 explicit `BEGIN` applies statement-by-statement while `user_version` is stamped

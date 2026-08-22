@@ -17,6 +17,10 @@ classifiers = [
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "typer>=0.12",
+    # Already arrives with typer, but cli.py imports it directly for the
+    # progress spinners -- an implicit dependency is one an upstream repack
+    # can remove without warning.
+    "rich>=13",
     "pyyaml>=6.0",
     "pillow>=10.3",
     "scenedetect>=0.6.4",

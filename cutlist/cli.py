@@ -4,12 +4,15 @@ import json
 import random
 import shutil
 import socket
+import sys
 import uuid
+from contextlib import contextmanager
 from dataclasses import asdict
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 import typer
+from rich.console import Console
 
 from cutlist.assemble import AssembleError, assemble_clips, parse_ids
 from cutlist.db import store
@@ -59,6 +62,38 @@ def handle_errors(fn):
     return wrapper
 
 
+# One console for the whole process: rich permits a single live display at a
+# time, and every spinner here is sequential. Bound to stderr so an animation
+# never lands in `--json` output or in a piped listing.
+_console = Console(stderr=True)
+
+
+@contextmanager
+def working(text: str):
+    """Animate `text` while a long ffmpeg or detection step runs.
+
+    ffmpeg says nothing for minutes at a time, and a plain line printed before
+    it leaves no way to tell work from a hang. Yields the live `Status` so a
+    caller that has its own progress (`extract`, per shot) can retitle it, and
+    `None` when there is no terminal to animate -- where the same text is
+    printed once, because a log still wants to know what was being done.
+
+    The check is `sys.stderr.isatty()` rather than rich's own
+    `Console.is_terminal`, which any value of FORCE_COLOR forces true -- and
+    FORCE_COLOR=1 is what CI and the documented test command both set, which
+    would start a refresh thread against pytest's captured stderr in every
+    test that touches a command.
+    """
+    # A dumb terminal is a tty that cannot move the cursor: rich draws nothing
+    # at all there rather than a still frame, so it takes the plain line too.
+    if not sys.stderr.isatty() or _console.is_dumb_terminal:
+        typer.echo(f"{text}...", err=True)
+        yield None
+        return
+    with _console.status(f"{text}...", spinner="dots") as status:
+        yield status
+
+
 def _require(path: Path) -> None:
     """Fail fast on a missing file with the typo the user actually made.
 
@@ -88,7 +123,8 @@ def shots(
 ) -> None:
     """Detect cuts and report the shots between them."""
     _require(video)
-    found = detect_shots(video)
+    with working("detecting shots"):
+        found = detect_shots(video)
 
     if as_json:
         typer.echo(json.dumps(
@@ -200,8 +236,8 @@ def _draft_clips(
     Returns the directory the clips were written to.
     """
     typer.echo(f"caption: {spec.caption.text}")
-    typer.echo("detecting shots...")
-    found = detect_shots(video)
+    with working("detecting shots"):
+        found = detect_shots(video)
     typer.echo(f"{len(found)} shots")
 
     rng = random.Random(seed)
@@ -229,10 +265,11 @@ def _draft_clips(
                 picks = draft_picks(found, spec.rhythm, rng)
                 segments = [pick.segment for pick in picks]
                 clip = destination / f"{ordinal:02d}.mp4"
-                render_clip(
-                    video, segments, caption_png, spec.output, clip,
-                    scratch_root / f"{ordinal:02d}",
-                )
+                with working(f"cutting {ordinal:02d}/{count}"):
+                    render_clip(
+                        video, segments, caption_png, spec.output, clip,
+                        scratch_root / f"{ordinal:02d}",
+                    )
                 # Capturing thumbnails can fail the same way rendering can
                 # (ffmpeg on a bad seek, a source that vanished mid-run), and a
                 # clip on disk with no database row is exactly the state this
@@ -263,10 +300,14 @@ def _draft_clips(
                     # already written went. --keep-shots is a convenience; an
                     # optional side-effect does not get to do that.
                     try:
-                        extract_all(
-                            conn, video=video, workspace=workspace,
-                            shots=[pick.shot for pick in picks],
-                        )
+                        # Outside the spinner above rather than inside it: the
+                        # warning below writes straight to stderr, and a live
+                        # animation on the same stream would be drawn over it.
+                        with working(f"filing shots from {ordinal:02d}/{count}"):
+                            extract_all(
+                                conn, video=video, workspace=workspace,
+                                shots=[pick.shot for pick in picks],
+                            )
                     except ToolError as exc:
                         typer.echo(
                             f"warning: {ordinal:02d}: library copy skipped: {exc}",
@@ -343,8 +384,8 @@ def demo(
     if source.exists():
         typer.echo(f"using {source}")
     else:
-        typer.echo("building a demo source video...")
-        build_demo_source(source)
+        with working("building a demo source video"):
+            build_demo_source(source)
 
     preset_path = Path(__file__).with_name("demo.yaml")
     spec = load_preset(preset_path)
@@ -432,17 +473,17 @@ def assemble(
     preset_sha256, preset_json = _preset_fingerprint(preset, spec)
 
     typer.echo(f"caption: {spec.caption.text}")
-    typer.echo(f"assembling {len(ids)} clips...")
 
-    written = assemble_clips(
-        connect(workspace.database),
-        ids=ids,
-        spec=spec,
-        workspace=workspace,
-        preset_sha256=preset_sha256,
-        preset_json=preset_json,
-        cutlist_version=_cutlist_version(),
-    )
+    with working(f"assembling {len(ids)} clips"):
+        written = assemble_clips(
+            connect(workspace.database),
+            ids=ids,
+            spec=spec,
+            workspace=workspace,
+            preset_sha256=preset_sha256,
+            preset_json=preset_json,
+            cutlist_version=_cutlist_version(),
+        )
     typer.echo(f"wrote {written.relative_to(root).as_posix()}")
 
 
@@ -562,7 +603,8 @@ def rerender(
     if row is None:
         raise store.RatingNotFound(f"no recorded clip at {wanted}")
 
-    written = rebuild_clip(conn, root=root, clip_id=row["id"])
+    with working("rebuilding"):
+        written = rebuild_clip(conn, root=root, clip_id=row["id"])
     typer.echo(f"rebuilt {wanted} ({written.stat().st_size / 1024:.0f} KB)")
 
 
@@ -578,16 +620,27 @@ def extract(
     workspace = Workspace(root=root)
     conn = connect(workspace.database)
 
-    typer.echo("detecting shots...")
-    found = detect_shots(video)
+    with working("detecting shots"):
+        found = detect_shots(video)
     typer.echo(f"{len(found)} shots  ({estimate_extraction(video, found)})")
 
-    def report(index: int, total: int, shot, status: str) -> None:
-        typer.echo(f"[{index}/{total}] shot {shot.index}  {shot.duration:.2f}s  {status}")
+    with working(f"extracting {len(found)} shots") as spinner:
+        # A spinner is transient, so a per-shot line printed beside it would
+        # scroll the animation away every shot. With a terminal the counter
+        # goes into the spinner itself; without one those lines are the only
+        # record of progress there is, so they stay.
+        def report(index: int, total: int, shot, status: str) -> None:
+            if spinner is None:
+                typer.echo(
+                    f"[{index}/{total}] shot {shot.index}  {shot.duration:.2f}s  {status}"
+                )
+            else:
+                spinner.update(f"extracting shot {index}/{total}")
 
-    added, skipped = extract_all(
-        conn, video=video, workspace=workspace, crf=crf, shots=found, on_progress=report
-    )
+        added, skipped = extract_all(
+            conn, video=video, workspace=workspace, crf=crf, shots=found,
+            on_progress=report,
+        )
     # Not the exact per-clip directory: library_path folds the source's
     # content hash into it, and re-deriving that here would duplicate a
     # naming scheme this module does not own. `cutlist library` has the
