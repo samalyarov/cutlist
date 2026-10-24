@@ -183,6 +183,20 @@ repeats allowed -- the order is the edit. It applies the preset's `caption` and
 and a duration rule that dropped some of them would be answering a question you
 did not ask.
 
+To play only part of a clip, give it a trim as `id:start-end`, in seconds from
+the start of that library file -- the file you watched, not the original video:
+
+```
+cutlist assemble "14:0-15,22,31:2.5-6" --preset presets/sample_preset.yaml
+```
+
+That plays the first 15 seconds of clip 14, all of clip 22, then 2.5s to 6s of
+clip 31. Each trim names one id (a range cannot take one), and the same clip
+can appear twice with different trims. Start and end are plain seconds, like
+`2` or `2.5`. An end matching the duration shown in a filename or by `cutlist
+library` means "to the end". A trim that runs past the end, or is shorter than
+one frame at the preset's frame rate, is refused before anything is rendered.
+
 An assembled clip records the *original* video and timecodes, not the library
 file, so it decomposes exactly like a drafted one and a rating on it means the
 same thing -- including `cutlist rerender`, which rebuilds it from those

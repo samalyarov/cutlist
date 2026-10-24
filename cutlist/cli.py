@@ -451,7 +451,11 @@ def rate(
 @app.command()
 @handle_errors
 def assemble(
-    clips: str = typer.Argument(..., help='Library clip ids, e.g. "2,3,4" or "2-5,9".'),
+    clips: str = typer.Argument(
+        ...,
+        help='Library clip ids, e.g. "2,3,4" or "2-5,9". Play part of one with '
+        'id:start-end, in seconds from that clip\'s start: "12:1.5-4".',
+    ),
     preset: Path = typer.Option(..., "--preset", help="Path to a preset YAML."),
     caption: str | None = typer.Option(None, "--caption", help="Override the preset's text."),
     root: Path = typer.Option(Path("."), "--root", help="Workspace root."),
