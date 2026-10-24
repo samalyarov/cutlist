@@ -103,10 +103,10 @@ def test_extract_shot_is_silent_when_source_has_no_audio(tmp_path, fixture_video
     assert probe(dest).has_audio is False
 
 
-def test_extract_names_files_by_timecode(tmp_path, fixture_video):
+def test_extract_names_files_by_id_then_timecode(tmp_path, fixture_video):
     ws = Workspace(root=tmp_path)
-    path = library_path(ws, fixture_video, 65.5, 4.25)
-    assert path.name == "00h01m05.500s__4.25s.mp4"
+    path = library_path(ws, fixture_video, 65.5, 4.25, 7)
+    assert path.name == "0007__00h01m05.500s__4.25s.mp4"
     assert path.parent == ws.library / f"{fixture_video.stem}__{video_id(fixture_video)}"
 
 
@@ -164,6 +164,20 @@ def test_extract_stores_every_shot(conn, workspace, fixture_video):
     for clip in clips:
         resolved = workspace.root / clip["path"]
         assert resolved.exists()
+
+
+def test_extracted_filenames_carry_the_id_assemble_takes(conn, workspace, fixture_video):
+    """The number in a library filename must be the id `cutlist assemble`
+    accepts, or picking clips means matching timecodes back to a listing by
+    hand. Guards both halves: the name is built from the id, and the row is
+    repointed at the file that was actually written.
+    """
+    extract_all(conn, video=fixture_video, workspace=workspace)
+
+    for clip in store.library_clips(conn):
+        on_disk = workspace.root / clip["path"]
+        assert on_disk.exists()
+        assert on_disk.name.startswith(f"{clip['id']:04d}__")
 
 
 def test_extract_is_idempotent(conn, workspace, fixture_video):

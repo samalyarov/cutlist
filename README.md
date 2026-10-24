@@ -169,12 +169,13 @@ shot is the same shot whichever run found it. Trimmed picks would fill the
 library with near-duplicates of the same footage at slightly different in and
 out points, and an id would stop meaning anything durable.
 
-Files land in `library/<video>__<hash>/<timecode>__<duration>s.mp4`. They are
-ordinary MP4s in an ordinary directory -- browse it, and drag whatever you want
-into another project. The hash in the directory name is not decoration: two
-videos that happen to share a filename would otherwise overwrite each other's
-masters. `cutlist library` maps ids to paths for the times an id is what you
-need.
+Files land in `library/<video>__<hash>/<id>__<timecode>__<duration>s.mp4`. They
+are ordinary MP4s in an ordinary directory -- browse it, and drag whatever you
+want into another project. The leading number is the id `assemble` takes, so
+picking clips by eye needs no lookup. The hash in the directory name is not
+decoration: two videos that happen to share a filename would otherwise
+overwrite each other's masters. Clips extracted before ids were part of the
+name keep their old names; `cutlist library` maps ids to paths for those.
 
 `assemble` builds a video from the ids you give, in the order you give them,
 repeats allowed -- the order is the edit. It applies the preset's `caption` and

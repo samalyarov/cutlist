@@ -11,7 +11,7 @@ from pathlib import Path
 from cutlist.db import store
 from cutlist.media.probe import probe
 from cutlist.media.shots import Shot, detect_shots
-from cutlist.paths import video_id
+from cutlist.paths import resolve_within, video_id
 from cutlist.shell import run
 
 
@@ -23,9 +23,21 @@ def _timecode(seconds: float) -> str:
     return f"{int(hours):02d}h{int(minutes):02d}m{secs:06.3f}s"
 
 
-def library_path(workspace, video: Path, start_s: float, duration_s: float) -> Path:
-    """Timecode-first, not id-first: the point of a browsable directory is
-    finding footage by eye, and a timecode says where a clip came from.
+def library_path(
+    workspace, video: Path, start_s: float, duration_s: float, clip_id: int | None = None
+) -> Path:
+    """Id first, then the timecode the footage came from.
+
+    The id leads because it is what `cutlist library` prints and `cutlist
+    assemble` takes: a directory you browse by eye is no use if picking a
+    file out of it still means looking its id up somewhere else. Nothing is
+    lost chronologically -- ids ascend with start time within a video. The
+    timecode stays because it says where in the source the shot sits, at
+    millisecond precision: shot boundaries can fall inside the same second
+    and whole-second names would collide.
+
+    `clip_id` is optional only because the row has to be inserted before its
+    id exists; that first insert names the path it is about to become.
 
     The directory folds in the source's content hash, exactly as
     `Workspace.cache_for` already does -- two videos that happen to share a
@@ -36,7 +48,8 @@ def library_path(workspace, video: Path, start_s: float, duration_s: float) -> P
     the hash only disambiguates it.
     """
     directory = workspace.library / f"{video.stem}__{video_id(video)}"
-    return directory / f"{_timecode(start_s)}__{duration_s:.2f}s.mp4"
+    name = f"{_timecode(start_s)}__{duration_s:.2f}s.mp4"
+    return directory / (f"{clip_id:04d}__{name}" if clip_id is not None else name)
 
 
 def extract_shot(video: Path, shot: Shot, dest: Path, *, crf: int = 18) -> Path:
@@ -106,24 +119,40 @@ def extract_all(
     total = len(shots)
 
     for index, shot in enumerate(shots, start=1):
-        dest = library_path(workspace, video, shot.start, shot.duration)
         existing = store.library_clip_at(
             conn, video_hash=video_hash, start_s=shot.start, end_s=shot.end
         )
+        # The row's own path, not a recomputed one: a row records where its
+        # file actually is, and clips extracted before the id was part of the
+        # name are still exactly where they were put.
+        on_disk = resolve_within(workspace.root, existing["path"]) if existing else None
 
-        if existing is not None and dest.exists():
+        if on_disk is not None and on_disk.exists():
             skipped += 1
             status = "skipped"
         else:
-            extract_shot(video, shot, dest, crf=crf)
-            store.record_library_clip(
+            # A filename carrying the id cannot be known until the row is
+            # inserted, and the row must not be inserted until the encode
+            # succeeds -- a failed extraction that left a row behind would
+            # put a clip in `cutlist library` that no file backs. So the
+            # encode lands on the id-less name and is renamed into place
+            # once the id exists; the rename is same-directory, so it is
+            # atomic and costs nothing.
+            staged = library_path(workspace, video, shot.start, shot.duration)
+            extract_shot(video, shot, staged, crf=crf)
+            clip_id = store.record_library_clip(
                 conn,
                 video_hash=video_hash,
                 start_s=shot.start,
                 end_s=shot.end,
                 shot_index=shot.index,
-                path=dest.relative_to(workspace.root).as_posix(),
+                path=staged.relative_to(workspace.root).as_posix(),
                 duration_s=shot.duration,
+            )
+            dest = library_path(workspace, video, shot.start, shot.duration, clip_id)
+            staged.replace(dest)
+            store.set_library_clip_path(
+                conn, clip_id, dest.relative_to(workspace.root).as_posix()
             )
             added += 1
             status = "added"
