@@ -186,8 +186,12 @@ cutlist ratings [--json]
 cutlist fonts [--search TEXT]
 ```
 
-`assemble` takes ids as a comma list with ranges: `"1,4,7-9"`. It ignores the
-preset's `rhythm` — those clips were chosen deliberately.
+`assemble` takes ids as a comma list with ranges: `"1,4,7-9"`. Any single id
+can be trimmed as `id:start-end`, seconds from that library clip's own start:
+`"4:1.5-6,7-9"`. It ignores the preset's `rhythm` — those clips were chosen
+deliberately. A trim is recorded like a drafted segment: its own source
+timecodes as the segment, the whole shot as the parent — which is why
+`rerender` needs no knowledge of trims.
 
 `draft` writes to `output/<video>/<preset>/<run-id>/`. The run id is in the path
 so re-drafting the same video and preset never overwrites an earlier run's files

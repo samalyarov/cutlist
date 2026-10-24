@@ -208,6 +208,18 @@ def record_library_clip(
     return int(library_clip_at(conn, video_hash=video_hash, start_s=start, end_s=end)["id"])
 
 
+def set_library_clip_path(conn: sqlite3.Connection, clip_id: int, path: str) -> None:
+    """Point a library clip at the file that was written for it.
+
+    The path is written twice because it names the clip's id, which only
+    exists once the row does. Re-extracting a clip whose file went missing
+    comes back through here too, which is how a row written under an older
+    naming scheme ends up pointing at the newly named file.
+    """
+    with conn:
+        conn.execute("UPDATE library_clip SET path = ? WHERE id = ?", (path, clip_id))
+
+
 def library_clip_at(
     conn: sqlite3.Connection, *, video_hash: str, start_s: float, end_s: float
 ) -> sqlite3.Row | None:

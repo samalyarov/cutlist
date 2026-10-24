@@ -169,18 +169,33 @@ shot is the same shot whichever run found it. Trimmed picks would fill the
 library with near-duplicates of the same footage at slightly different in and
 out points, and an id would stop meaning anything durable.
 
-Files land in `library/<video>__<hash>/<timecode>__<duration>s.mp4`. They are
-ordinary MP4s in an ordinary directory -- browse it, and drag whatever you want
-into another project. The hash in the directory name is not decoration: two
-videos that happen to share a filename would otherwise overwrite each other's
-masters. `cutlist library` maps ids to paths for the times an id is what you
-need.
+Files land in `library/<video>__<hash>/<id>__<timecode>__<duration>s.mp4`. They
+are ordinary MP4s in an ordinary directory -- browse it, and drag whatever you
+want into another project. The leading number is the id `assemble` takes, so
+picking clips by eye needs no lookup. The hash in the directory name is not
+decoration: two videos that happen to share a filename would otherwise
+overwrite each other's masters. Clips extracted before ids were part of the
+name keep their old names; `cutlist library` maps ids to paths for those.
 
 `assemble` builds a video from the ids you give, in the order you give them,
 repeats allowed -- the order is the edit. It applies the preset's `caption` and
 `output` blocks but **ignores `rhythm`**: you chose those clips deliberately,
 and a duration rule that dropped some of them would be answering a question you
 did not ask.
+
+To play only part of a clip, give it a trim as `id:start-end`, in seconds from
+the start of that library file -- the file you watched, not the original video:
+
+```
+cutlist assemble "14:0-15,22,31:2.5-6" --preset presets/sample_preset.yaml
+```
+
+That plays the first 15 seconds of clip 14, all of clip 22, then 2.5s to 6s of
+clip 31. Each trim names one id (a range cannot take one), and the same clip
+can appear twice with different trims. Start and end are plain seconds, like
+`2` or `2.5`. An end matching the duration shown in a filename or by `cutlist
+library` means "to the end". A trim that runs past the end, or is shorter than
+one frame at the preset's frame rate, is refused before anything is rendered.
 
 An assembled clip records the *original* video and timecodes, not the library
 file, so it decomposes exactly like a drafted one and a rating on it means the
